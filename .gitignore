@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Experiment outputs: model checkpoints and per-run logs are large and regenerable.
+# Summaries worth publishing are copied into results/.
+runs/
+*.pt
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
