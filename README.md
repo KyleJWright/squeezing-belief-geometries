@@ -143,6 +143,7 @@ Loss above optimum:
 | Width | 8 | 6 | 5 | 4 | 3 | 2 |
 | --- | --- | --- | --- | --- | --- | --- |
 | Sparse, separate tokens | 0.02% | 0.03% | 0.04% | 0.14% | 1.6% | 90% |
+| Sparse, shared tokens | 0.01% | 0.03% | 0.05% | 0.15% | 2.0% | 13% |
 | Dense | 0.03% | 0.07% | 0.28% | 0.50% | 1.6% | 16% |
 
 **Sparse: both survive to width 4,** with B losing detail first, and both fail at width 3. This is the
@@ -180,7 +181,8 @@ entirely costs $`0.0095`$ nats, which is 0.50% of the dense optimal loss, and th
 (Beyond last token, per process.) With shared tokens, both beliefs still survive down to width 4 and fail
 at width 3, the same threshold as before: whichever process is running, the prediction is a distribution
 over the same 3 tokens, a 2-parameter family. B holds up better than with separate tokens (0.67 against
-0.54 at width 4).
+0.54 at width 4). Loss is as close to optimal as with separate tokens (0.15% above at width 4, against
+0.14%; table above), even though the optimal predictor now has to weigh up which process is running.
 
 The scores are lower at the wider widths, but this does not mean the model is worse. Each process's belief
 is computed as if the process were known. With shared tokens the model cannot know it, especially early in
@@ -241,7 +243,8 @@ readout bound, not a collision.
 with it: the offset drops from about 6 spreads to 0.05–0.4, so the 6 spreads came from the token
 embeddings, not from anything the model had to learn. The planes coincide too, with overlap 0.9–0.97 at
 every width, including width 8, where there is room for orthogonal planes and for a separate offset. The
-model is not squeezed into sharing; it chooses one plane for both beliefs.
+model is not squeezed into sharing; it chooses one plane for both beliefs, and loses nothing measurable by
+doing so (loss within 0.15% of optimal down to width 4).
 
 A natural reading: whichever process is running, the next-token prediction is a distribution over the same
 3 tokens, and one plane can carry it for both. Each process's belief maps to that prediction by an
