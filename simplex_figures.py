@@ -5,8 +5,12 @@
         --out results/seed0/simplex_single
 
     # Two processes at several widths, sparse (mixture) and dense (parallel) side by side
-    python simplex_figures.py pair --mixture runs/seed0/mixture_K2_d*.pt --parallel runs/seed0/parallel_K2_d*.pt \
+    python simplex_figures.py pair --left runs/seed0/mixture_K2_d*.pt --right runs/seed0/parallel_K2_d*.pt \
         --out results/seed0/simplex_pair
+
+    # Sparse with separate tokens per process against sparse with one shared set of tokens
+    python simplex_figures.py pair --left runs/seed0/mixture_K2_d*.pt --right runs/seed0/shared_K2_d*.pt \
+        --left_title "Sparse, separate tokens" --right_title "Sparse, shared tokens" --out results/seed0/simplex_shared
 
 How each panel is made (the procedure of Shai et al., Fig. 5):
   1. Compute the exact belief over the 3 hidden states after every prefix (single mode: every
@@ -214,9 +218,14 @@ def panels_for(path, args, rng):
     return model.cfg.d_model, comp, out
 
 
+def regime_name(comp):
+    """'mixture', 'mixture-shared' or 'parallel'."""
+    return comp.regime + ("-shared" if comp.regime == "mixture" and comp.vocab == "shared" else "")
+
+
 def pair(args, rng):
-    runs = {"mixture": sorted(args.mixture, key=width_of, reverse=True),
-            "parallel": sorted(args.parallel, key=width_of, reverse=True)}
+    runs = {"left": sorted(args.left, key=width_of, reverse=True),
+            "right": sorted(args.right, key=width_of, reverse=True)}
     for ps in runs.values():
         if ps and build(load_checkpoint(ps[0])[1]["extra"]["spec"]).K != 2:
             raise SystemExit("pair mode expects models trained with --K 2")
@@ -227,26 +236,27 @@ def pair(args, rng):
         ax.axis("off")
     records = []
     comp = None
-    for c0, regime in [(0, "mixture"), (3, "parallel")]:
-        by_width = {width_of(p): p for p in runs[regime]}
+    for c0, side in [(0, "left"), (3, "right")]:
+        by_width = {width_of(p): p for p in runs[side]}
         for r, w in enumerate(widths, start=1):
             if w not in by_width:
                 axes[r, c0].axis("off")
                 axes[r, c0 + 1].axis("off")
                 continue
             d, comp, res = panels_for(by_width[w], args, rng)
+            regime = regime_name(comp)
             for k, (pred, true, m) in enumerate(res):
                 draw(axes[r, c0 + k], pred, true, metric_title(d, m), rng)
                 records.append({"regime": regime, "d_model": d, "process": "AB"[k], **m})
-                print(f"{regime:>8} d_model {d:>2} process {'AB'[k]}: R² {m['r2']:.3f}, "
+                print(f"{regime:>14} d_model {d:>2} process {'AB'[k]}: R² {m['r2']:.3f}, "
                       f"last token alone {m['r2_last_token']:.3f}, beyond {m['beyond']:.3f}")
     for c0 in (0, 3):  # ground-truth row: exact beliefs of each process
         for k, hmm in enumerate(comp.components):
             Y = hmm.beliefs_along(hmm.sample(args.n_seq, 10, rng))[0].reshape(-1, 3)
             x, a = comp.spec["params"][k]
             draw(axes[0, c0 + k], Y, Y, f"Ground truth, process {'AB'[k]}\n(x = {x}, α = {a})", rng)
-    fig.text(0.28, 0.995, "Sparse: one process per sequence", ha="center", va="top", fontsize=12, color=INK)
-    fig.text(0.75, 0.995, "Dense: both processes every token", ha="center", va="top", fontsize=12, color=INK)
+    fig.text(0.28, 0.995, args.left_title, ha="center", va="top", fontsize=12, color=INK)
+    fig.text(0.75, 0.995, args.right_title, ha="center", va="top", fontsize=12, color=INK)
     fig.tight_layout(rect=(0, 0, 1, 0.975))
     fig.savefig(args.out + ".png", dpi=150)
     with open(args.out + ".json", "w") as f:
@@ -260,8 +270,10 @@ def main():
     s = sub.add_parser("single")
     s.add_argument("--ckpts", nargs="+", required=True)
     p = sub.add_parser("pair")
-    p.add_argument("--mixture", nargs="+", required=True)
-    p.add_argument("--parallel", nargs="+", required=True)
+    p.add_argument("--left", "--mixture", dest="left", nargs="+", required=True, help="models for the left pair of columns")
+    p.add_argument("--right", "--parallel", dest="right", nargs="+", required=True, help="models for the right pair")
+    p.add_argument("--left_title", default="Sparse: one process per sequence")
+    p.add_argument("--right_title", default="Dense: both processes every token")
     for q in (s, p):
         q.add_argument("--out", required=True)
         q.add_argument("--n_seq", type=int, default=4000, help="pair mode: sampled sequences per model")

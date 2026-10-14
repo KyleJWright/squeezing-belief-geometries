@@ -31,15 +31,23 @@ I'm interested in better understanding how this squeezing works in the setting o
   in its final residual stream ($`R^2 = 1.00`$ on held-out prefixes). Shuffling beliefs before fitting gives
   $`R^2 = 0.00`$.
 - **One process, too narrow.** The simplex degrades gracefully down to width 4 and fails at width 3, where
-  the decoded beliefs collapse onto a curve. This threshold follows from LayerNorm: a model of width $`d`$
-  can only produce a family of predictions with $`d-2`$ parameters, and Mess3 needs 2.
-- **Two processes.** When only one process is active at a time (*sparse*), both survive down to width 4,
-  sharing nearly the same directions and told apart by position. When both are active at once (*dense*),
-  the model gives up one process entirely as width falls, and it gives up the one whose memory is worth
-  ~30 times less.
+  the decoded beliefs collapse onto a curve. The threshold matches a LayerNorm argument: if predictions vary
+  smoothly with the belief, a model of width $`d`$ can only produce a family of predictions with $`d-2`$
+  parameters, and Mess3 needs 2.
+- **Two processes.** When only one process is active at a time (*sparse*), both survive down to width 4.
+  With separate tokens per process the two belief patches share directions but sit apart; with one shared
+  set of tokens they lie on top of each other, in a single plane, at every width. When both are active at
+  once (*dense*), the model gives up one process entirely as width falls, and it gives up the one whose
+  memory is worth ~30 times less.
 - **Packing.** In the dense regime, whenever both beliefs are kept their planes are close to orthogonal,
   the optimal Grassmannian packing. In the sparse regime the overlaps are far above optimal, because the
   sparse problem is an arrangement of affine patches, not a packing of subspaces.
+- **Link to superposition.** The regimes show, in this setting, the two behaviours of the toy models of
+  Elhage et al. (2022): when features are dense the model keeps the most valuable and drops the rest; when
+  they are sparse it lets them share directions. The sharing mechanism differs. In Elhage et al.
+  interference is filtered out by a nonlinearity. Here, with separate tokens, the patches are told apart by
+  an offset that the token embeddings supply; with shared tokens there is no offset, and the two beliefs
+  share one plane even when there is room for two.
 
 ## Setup
 
@@ -67,8 +75,10 @@ other half in the triangle, coloured by the true belief. Two numbers go with eac
 scored on the same sequences.
 
 **Two processes.** Process A has $`(x, \alpha) = (0.05, 0.85)`$ and B has $`(0.15, 0.60)`$. In the **sparse**
-regime each sequence comes from one process, chosen at random, with separate tokens for each (6 in all). In
-the **dense** regime both run side by side, and each token is the pair of their tokens (9 in all).
+regime each sequence comes from one process, chosen at random. It comes in two versions: with **separate
+tokens** for each process (6 in all), so every token reveals the process, and with one **shared** set of 3
+tokens, so the model must infer the process from the statistics of what it has seen. In the **dense** regime
+both run side by side, and each token is the pair of their tokens (9 in all).
 
 All numbers are means over 3 seeds, with [min, max] where useful; images are seed 0.
 
@@ -98,10 +108,13 @@ triangle, and the seeds disagree on how much survives. Width 2 shows three blobs
 coordinate and then normalises to a sphere. So the output head sees a point on a sphere of dimension $`d - 2`$,
 and the next-token distributions a model of width $`d`$ can produce form a family with at most $`d-2`$ parameters.
 For Mess3 the optimal prediction is an invertible affine function of the belief, so the optimal predictions
-form a 2-parameter family, and exact prediction needs $`d - 2 \ge 2`$, i.e. $`d \ge 4`$. At $`d = 3`$ the head sees
-a circle, a 1-parameter family, which matches the curve in the width-3 image. (The curve is in the residual
-stream before the LayerNorm, which is not forced to be one-dimensional, so this is consistency rather than
-proof.) The argument is in the [theory section](#theory-belief-planes-layernorm-and-grassmannian-packing).
+form a 2-parameter family. If the model's prediction varies smoothly with the belief, exact prediction then
+needs $`d - 2 \ge 2`$, i.e. $`d \ge 4`$. At $`d = 3`$ the head sees a circle, a 1-parameter family, which matches
+the curve in the width-3 image. This is a heuristic, not a theorem: with a context of 10 there are only finitely
+many beliefs, and nothing forces the network's map from prefixes to predictions to be smooth. The curve is
+also in the residual stream before the LayerNorm, which is not forced to be one-dimensional, so it is
+consistency rather than proof. The argument and its assumptions are in the
+[theory section](#theory-belief-planes-layernorm-and-grassmannian-packing).
 
 **Width 2 is a different failure.** At $`d = 2`$ the LayerNorm sends a line to two points, so it is a sign
 function with zero derivative (up to its small $`\epsilon`$). No gradient reaches the residual stream, and only
@@ -123,11 +136,13 @@ Beyond last token, per process:
 | 4 | 0.91 | 0.54 [0.51, 0.60] | 0.75 | −3.35 |
 | 3 | −0.34 | 0.08 | 0.44 [0.36, 0.50] | −3.76 |
 
+(Sparse here means separate tokens; the shared-token version is below.)
+
 Loss above optimum:
 
 | Width | 8 | 6 | 5 | 4 | 3 | 2 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Sparse | 0.02% | 0.03% | 0.04% | 0.14% | 1.6% | 90% |
+| Sparse, separate tokens | 0.02% | 0.03% | 0.04% | 0.14% | 1.6% | 90% |
 | Dense | 0.03% | 0.07% | 0.28% | 0.50% | 1.6% | 16% |
 
 **Sparse: both survive to width 4,** with B losing detail first, and both fail at width 3. This is the
@@ -136,8 +151,8 @@ one 2-parameter family of predictions at once.
 
 **Dense: one process is given up.** B is already weak at width 6 and gone below it. The large negative
 values mean the decoder cannot even recover B's last token: B is dropped, not kept at low resolution.
-A survives down to width 3. Two beliefs active at once need a 4-parameter family of predictions, so exact
-prediction needs $`d \ge 6`$; width 6 is necessary but in practice not quite enough.
+A survives down to width 3. Two beliefs active at once need a 4-parameter family of predictions, so by the
+same heuristic exact prediction needs $`d \ge 6`$; in practice width 6 is not quite enough.
 
 **Why B.** `memory_value.py` measures what each process's history is worth in next-token loss:
 
@@ -149,6 +164,30 @@ prediction needs $`d \ge 6`$; width 6 is necessary but in practice not quite eno
 B's history is worth about 30 times less, so it is the cheap one to drop. The numbers agree: dropping B
 entirely costs $`0.0095`$ nats, which is 0.50% of the dense optimal loss, and the width-4 dense models sit at
 0.50% above optimum. They predict A almost perfectly and B not at all.
+
+### Sparse with one shared set of tokens
+
+![Sparse regime with separate tokens per process (left) and one shared set of tokens (right)](results/simplex_shared.png)
+
+| Width | Separate tokens: A | Separate tokens: B | Shared tokens: A | Shared tokens: B |
+| --- | --- | --- | --- | --- |
+| 8 | 0.96 | 0.89 | 0.78 [0.76, 0.80] | 0.69 [0.67, 0.70] |
+| 6 | 0.94 | 0.85 | 0.75 [0.73, 0.79] | 0.66 [0.61, 0.71] |
+| 5 | 0.94 | 0.69 | 0.73 [0.70, 0.78] | 0.68 [0.67, 0.69] |
+| 4 | 0.91 | 0.54 | 0.63 [0.45, 0.75] | 0.67 [0.65, 0.70] |
+| 3 | −0.34 | 0.08 | 0.11 [−0.17, 0.37] | 0.11 [−0.13, 0.34] |
+
+(Beyond last token, per process.) With shared tokens, both beliefs still survive down to width 4 and fail
+at width 3, the same threshold as before: whichever process is running, the prediction is a distribution
+over the same 3 tokens, a 2-parameter family. B holds up better than with separate tokens (0.67 against
+0.54 at width 4).
+
+The scores are lower at the wider widths, but this does not mean the model is worse. Each process's belief
+is computed as if the process were known. With shared tokens the model cannot know it, especially early in
+a sequence, so even the Bayes-optimal predictor would not carry these beliefs exactly, and the ceiling is
+below 1.
+
+The geometry is the striking part: see [section 4](#4-comparison-with-grassmannian-packing).
 
 ## 4. Comparison with Grassmannian packing
 
@@ -163,13 +202,16 @@ possible one.
 Largest overlap between the two belief planes, final layer, among models that represent both
 (held-out $`R^2 \ge 0.5`$):
 
-| Width | Optimum | Two random planes (mean) | Sparse | Sparse, γ-metric | Sparse offset separation | Dense | Dense, γ-metric |
+| Width | Optimum | Two random planes (mean) | Sparse, separate tokens | Offset separation | Sparse, shared tokens | Offset separation | Dense |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | 1 | 1 | 1.00 | 1.00 | 2.4 | – | – |
-| 4 | 0.50 | 0.67 | 0.75 [0.60, 0.93] | 0.72 | 5.9 | – | – |
-| 5 | 0 | 0.50 | 0.29 [0.23, 0.37] | 0.28 | 6.0 | 0.26 (1 seed) | 0.36 |
-| 6 | 0 | 0.40 | 0.14 [0.03, 0.23] | 0.15 | 6.0 | 0.013 [0.003, 0.025] | 0.021 |
-| 8 | 0 | 0.29 | 0.11 [0.09, 0.13] | 0.08 | 5.9 | 0.020 [0.003, 0.039] | 0.015 |
+| 3 | 1 | 1 | 1.00 | 2.4 | 1.00 | 0.05 | – |
+| 4 | 0.50 | 0.67 | 0.75 [0.60, 0.93] | 5.9 | 0.94 [0.92, 0.97] | 0.17 | – |
+| 5 | 0 | 0.50 | 0.29 [0.23, 0.37] | 6.0 | 0.91 [0.90, 0.91] | 0.21 | 0.26 (1 seed) |
+| 6 | 0 | 0.40 | 0.14 [0.03, 0.23] | 6.0 | 0.94 [0.92, 0.98] | 0.33 | 0.013 [0.003, 0.025] |
+| 8 | 0 | 0.29 | 0.11 [0.09, 0.13] | 5.9 | 0.97 [0.96, 0.97] | 0.38 | 0.020 [0.003, 0.039] |
+
+In the γ-metric the same entries are, by width 4, 5, 6, 8: separate tokens 0.72, 0.28, 0.15, 0.08; shared
+tokens 0.93, 0.91, 0.94, 0.97; dense –, 0.36, 0.021, 0.015.
 
 *Offset separation* is the distance between the centres of the two processes' activation patches, divided
 by their typical spread. *Two random planes* is the expected overlap of independent random planes,
@@ -181,12 +223,33 @@ orthogonally once $`d - 1 \ge 4`$, i.e. $`d \ge 5`$, so packing is not what limi
 bound $`d \ge 6`$ is reached first. At width 5 only one seed keeps B at all, and that model's planes overlap
 noticeably (0.26).
 
-**Sparse: not a packing problem.** Overlaps are far above the optimum, and at width 4 above even the random
-baseline, yet both processes are decoded well and loss is within 0.14% of optimal. The two belief patches
-share directions but sit about 6 spreads apart, so position, not direction, tells them apart. Only one
-patch is active at a time, so nothing forces their directions apart. Even at width 3, where the
-two planes must coincide, the patches are still separated (2.4 spreads); the failure there is the readout
-bound, not a collision.
+Two cautions. First, the comparison never reaches the regime where packing is constrained: no dense model
+keeps both beliefs at a width where orthogonal planes are impossible. Second, near-orthogonality has a
+simpler possible cause than packing pressure. The optimal logits for A and B lie in orthogonal subspaces of
+logit space ([softmax section](#the-softmax-and-why-it-favours-linear-structure)), so planes that the output
+head maps onto them through a reasonably well-conditioned map come out nearly orthogonal anyway. The data
+cannot tell these apart.
+
+**Sparse, separate tokens: not a packing problem.** Overlaps are far above the optimum, and at width 4
+above even the random baseline, yet both processes are decoded well and loss is within 0.14% of optimal.
+The two belief patches share directions but sit about 6 spreads apart, so position, not direction, tells
+them apart. Only one patch is active at a time, so nothing forces their directions apart. Even at width 3,
+where the two planes must coincide, the patches are still separated (2.4 spreads); the failure there is the
+readout bound, not a collision.
+
+**Sparse, shared tokens: one plane for two beliefs.** Remove the separate tokens and the separation goes
+with it: the offset drops from about 6 spreads to 0.05–0.4, so the 6 spreads came from the token
+embeddings, not from anything the model had to learn. The planes coincide too, with overlap 0.9–0.97 at
+every width, including width 8, where there is room for orthogonal planes and for a separate offset. The
+model is not squeezed into sharing; it chooses one plane for both beliefs.
+
+A natural reading: whichever process is running, the next-token prediction is a distribution over the same
+3 tokens, and one plane can carry it for both. Each process's belief maps to that prediction by an
+invertible affine map, so each belief is linearly decodable from the shared plane once the process is
+known, and the two decoders find the same plane. This is consistent with the final layer holding mainly the
+next-token prediction, not two separate beliefs, but the experiment does not show it: the decoders are told
+which process produced each sequence, and whether the model itself tracks the process has not been
+measured.
 
 **Robustness.** Angles depend on the choice of inner product. Recomputed in the metric the output head's
 LayerNorm imposes (the γ-metric), and with planes fitted on optimal logits instead of beliefs, the
@@ -242,15 +305,30 @@ Two consequences follow.
 For Mess3 (parameters $`x, \alpha`$, with $`y = 1 - 2x`$ and $`\beta = (1-\alpha)/2`$ as in `processes.py`)
 the next-token distribution, as a row vector, is $`p(\cdot \mid \eta) = \eta N`$ with
 $`N_{ik} = \Pr(\text{token } k \mid \text{state } i)`$. It is an injective affine function of $`\eta`$
-($`N`$ is invertible whenever $`\alpha \ne \beta`$ and $`x \ne y`$). So an optimal predictor's outputs form a
-2-dimensional family. Since a smooth map cannot raise dimension (by Sard's theorem its image has measure
-zero in any higher-dimensional manifold), exact optimal prediction needs
+($`N`$ is invertible whenever $`\alpha \ne \beta`$ and $`x \ne y`$). So over a set of beliefs $`B \subset \Delta^2`$,
+an optimal predictor's outputs form an affine copy of $`B`$. The output head is a smooth map $`g`$ from the
+sphere $`S^{d-2}`$ to distributions, $`g(S^{d-2})`$ has Hausdorff dimension at most $`d-2`$, and an affine
+bijection preserves Hausdorff dimension. Exact optimal prediction on $`B`$ therefore needs
 
 ```math
-d - 2 \;\ge\; \dim(\text{family of optimal predictions}).
+d - 2 \;\ge\; \dim_H B .
 ```
 
-| Setting | Family of optimal predictions | Dimension | Readout bound |
+No assumption is needed about how the network maps prefixes to the sphere; only the output head has to be
+smooth. Three caveats decide how much this says.
+
+- **Finite context.** With a context of 10, $`B`$ is a finite set, of dimension 0, and the bound is empty:
+  a curve can pass through any finite set of points. It bites only in the limit of long contexts, where
+  $`B`$ fills out the fractal attractor. For finite contexts it is a heuristic: a map with bounded weights
+  cannot wiggle enough to thread a curve through tens of thousands of nearby points.
+- **Fractal dimension.** The attractor's Hausdorff dimension lies between 0 and 2. The threshold $`d \ge 4`$
+  assumes it exceeds 1, which the images suggest but which is not computed here.
+- **Two processes.** The table treats each belief set as 2-dimensional, as a filled region would be. For the
+  fractals themselves the sparse bound is $`d - 2 \ge \max(\dim_H B_A, \dim_H B_B)`$ and the dense one is
+  $`d - 2 \ge \dim_H (B_A \times B_B) \ge \dim_H B_A + \dim_H B_B`$, which gives $`d \ge 6`$ only if the two
+  dimensions sum to more than 3.
+
+| Setting | Optimal predictions | Dimension (filled regions) | Readout bound |
 | --- | --- | --- | --- |
 | One process | $`\{\eta N\}`$ | 2 | $`d \ge 4`$ |
 | Two processes, sparse | union of two 2-dimensional families | 2 | $`d \ge 4`$ |
@@ -347,6 +425,13 @@ when a hyperplane separates them, and nothing in this constrains the directions 
 triangles can share a plane and sit side by side. The relevant object is an arrangement of *affine*
 patches, not a packing of linear subspaces, and the Grassmannian overlap can be large at no cost.
 
+**Sparse with shared tokens: a common quotient.** With one set of tokens, the optimal prediction for either
+process is a distribution over the same 3 tokens: $`p = \eta_A N_A`$ or $`p = \eta_B N_B`$, both in the same
+2-dimensional family. If the final layer carries $`p`$ (or any affine image of it), both beliefs map into a
+single plane and the patches overlap, with no need to tell the processes apart there. Separate planes would
+be needed only if something downstream had to read the two beliefs separately, and at the final layer
+nothing does.
+
 ### The softmax, and why it favours linear structure
 
 The output is $`\mathrm{softmax}(\ell)`$, a nonlinear function of the logits $`\ell`$. Does this warp the
@@ -393,19 +478,43 @@ cannot say whether the model "uses" beliefs or logits as coordinates on it.
 | Setting | Readout bound | Packing threshold | Prediction | Observed |
 | --- | --- | --- | --- | --- |
 | One process | $`d \ge 4`$ | none (one plane) | fractal survives at width 4, breaks at 3 | ✓ Width 4 within 0.08% of optimal; width 3 collapses to a curve, 1.9% above |
-| Two, sparse | $`d \ge 4`$ | not required | both survive to width 4; planes may overlap, patches separated by offset | ✓ Both decoded at width 4 (0.14% above optimal); overlap 0.75 vs optimum 0.50; patches ~6 spreads apart |
-| Two, dense | $`d \ge 6`$ | $`d \ge 5`$ | planes near-orthogonal whenever both are kept; readout, not packing, binds | Mostly ✓ Overlap ≈ 0.01–0.02 when both kept; but B is already weak at width 6, so the bound is necessary, not sufficient |
+| Two, sparse, separate tokens | $`d \ge 4`$ | not required | both survive to width 4; planes may overlap, patches separated by offset | ✓ Both decoded at width 4 (0.14% above optimal); overlap 0.75 vs optimum 0.50; patches ~6 spreads apart |
+| Two, sparse, shared tokens | $`d \ge 4`$ | not required | both survive to width 4; one shared plane possible | ✓ Both decoded at width 4, fail at 3; planes coincide (overlap 0.9–0.97) and patches overlap at every width |
+| Two, dense | $`d \ge 6`$ | $`d \ge 5`$ | planes near-orthogonal whenever both are kept; readout, not packing, binds | Mostly ✓ Overlap ≈ 0.01–0.02 when both kept; B is already weak at width 6, so the bound is not sufficient; no model keeps both where packing would be constrained |
 
 ## Limitations
 
-- **Small scale.** Three seeds, one pair of Mess3 processes, one architecture, fixed training lengths.
-  The dense comparison with packing rests on 7 models that keep both beliefs, 6 of them at widths 6 and 8.
+- **Width changes more than storage.** Shrinking `d_model` shrinks the space the belief is stored in, but
+  also the space the network computes the belief update in, while the head size, learning rate and
+  training length stay fixed. A failure at width 3 could come from storage, computation or optimisation;
+  the large spread between seeds at width 3 suggests optimisation plays a part. The readout argument
+  explains the threshold but does not exclude the others.
+- **The readout bound is a heuristic at finite context.** See
+  [Which space: LayerNorm](#which-space-layernorm): it is a theorem only for the long-context limit, and
+  depends on the fractal's Hausdorff dimension, which is not computed here.
+- **Linear probes only.** Every image and $`R^2`$ is a linear decode. At small widths a belief may still be
+  present but encoded nonlinearly, and a linear probe would miss it. This matters for the link to
+  superposition, which is about features recovered nonlinearly despite interference.
+- **Separate tokens give away the process.** With separate tokens per process, every token says which
+  process is running. The shared-token run confirms that the large offset between the patches comes from
+  this.
+- **Decoders are told the process.** Each process's belief is decoded only on sequences that process
+  produced, so a good decode does not show that the model knows which process is running. Decoding the
+  posterior probability of each process from the residual stream would test that; it has not been done.
+- **The packing comparison is never constrained.** Dense models keep both beliefs only where orthogonal
+  planes are possible, and their near-orthogonality may be inherited from the orthogonal structure of the
+  optimal logits rather than from pressure to pack.
 - **One process pair.** A and B differ a lot in how much their memory is worth, which decides which one is
   dropped. A symmetric pair would test whether the model then shares the cost or still picks one.
-- **Final layer only.** Planes and overlaps are measured where the output head reads; earlier layers are
-  in the analysis files but not discussed.
-- **Linear measurement of a nonlinear readout.** Planes are affine fits before the final normalisation.
-  The γ-metric and logit-coordinate checks address the obvious alternatives, not every one.
+- **Images are sensitive to cheap structure.** Width 8 loses visible fractal detail at no measurable cost
+  in loss (0.01% above optimal), and width 4 costs 0.08%. The pictures magnify structure that is worth very
+  little to the loss.
+- **Small scale.** Three seeds, one architecture, fixed training lengths. The dense comparison with packing
+  rests on 7 models that keep both beliefs, 6 of them at widths 6 and 8; overlaps are measured only on
+  models that keep both, which is a selection.
+- **Final layer, partial metric.** Planes and overlaps are measured where the output head reads; earlier
+  layers are in the analysis files but not discussed. The γ-metric includes the final LayerNorm's scale but
+  not the unembedding $`W_U`$, so it is only part of the geometry the readout imposes.
 - **Thresholds.** A process counts as represented if its held-out $`R^2 \ge 0.5`$; the conclusions do not
   hinge on borderline cases except the single dense model at width 5.
 
@@ -416,7 +525,7 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 python run_simplex.py --steps 300 --seeds 0    # smoke test, a few minutes, blurry images
-python run_simplex.py                          # full run: 51 models over seeds 0, 1, 2
+python run_simplex.py                          # full run: 69 models over seeds 0, 1, 2
 python memory_value.py                         # value of each process's memory (seconds)
 ```
 

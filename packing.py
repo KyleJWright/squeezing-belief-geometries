@@ -46,7 +46,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-COLOURS = {"mixture": "#2a78d6", "parallel": "#eb6834"}
+COLOURS = {"mixture": "#2a78d6", "mixture-shared": "#1baf7a", "parallel": "#eb6834"}
+NAMES = {"mixture": "sparse, separate tokens", "mixture-shared": "sparse, shared tokens", "parallel": "dense"}
 INK, MUTED, RULE = "#1f1f1e", "#5f5e5a", "#c3c2b7"
 
 
@@ -96,7 +97,8 @@ def learned(cap_paths):
             continue
         O = np.array(L["overlap"])
         pairs = [(i, j) for i in kept for j in kept if i < j]
-        row = {"file": p, "regime": c["regime"], "K": c["K"], "d_model": c["d_model"], "n_readable": c["d_model"] - 1,
+        regime = c["regime"] + ("-shared" if c["regime"] == "mixture" and c.get("vocab") == "shared" else "")
+        row = {"file": p, "regime": regime, "K": c["K"], "d_model": c["d_model"], "n_readable": c["d_model"] - 1,
                "n_kept": len(kept), "max_overlap": float(max(O[i, j] for i, j in pairs)),
                "mean_overlap": float(np.mean([O[i, j] for i, j in pairs]))}
         if "overlap_gamma" in L:
@@ -148,7 +150,7 @@ def main():
         by[(r["n_kept"], r["regime"], r["d_model"])].append(r)
     for (K, regime, d), rs in sorted(by.items()):
         m = [r["max_overlap"] for r in rs]
-        line = (f"  {regime:>8}  {K} planes  width {d:>2}:  learned {np.mean(m):.3f} [{min(m):.3f}, {max(m):.3f}]"
+        line = (f"  {regime:>14}  {K} planes  width {d:>2}:  learned {np.mean(m):.3f} [{min(m):.3f}, {max(m):.3f}]"
                 f" ({len(m)} models)   optimal {opt[(K, d)]:.3f}")
         if "max_overlap_gamma" in rs[0]:
             g = [r["max_overlap_gamma"] for r in rs]
@@ -162,37 +164,40 @@ def main():
 
     has_offsets = any("min_offset_sep" in r for r in rows)
     ncol = len(Ks) + (1 if has_offsets else 0)
-    fig, axes = plt.subplots(1, ncol, figsize=(6.2 * ncol, 4.8), squeeze=False)
+    fig, axes = plt.subplots(1, ncol, figsize=(6.2 * ncol, 6.0), squeeze=False)
     ticks = [t for t in [3, 4, 5, 6, 8, 12, 16, 32, 64] if t <= max(widths)]
     for ax, K in zip(axes[0], Ks):
         ds = np.arange(3, max(widths) + 1)
         ax.plot(ds, [opt[(K, d)] for d in ds], color=INK, linewidth=2, label="optimal packing in ℝᵈ⁻¹ (numerical)")
         dd = np.linspace(3, max(widths), 300)
         ax.plot(dd, [rankin(K, x - 1) for x in dd], color=MUTED, linewidth=1.3, linestyle="--", label="Rankin bound")
-        for regime in ["mixture", "parallel"]:
+        for regime in COLOURS:
             rs = [r for r in rows if r["n_kept"] == K and r["regime"] == regime]
             if rs:
                 jitter = 1 + 0.025 * (np.arange(len(rs)) % 3 - 1)
-                name = "sparse" if regime == "mixture" else "dense"
+                name = NAMES[regime]
                 ax.scatter([r["d_model"] * j for r, j in zip(rs, jitter)], [r["max_overlap"] for r in rs], s=34,
                            color=COLOURS[regime], edgecolor="white", linewidth=0.7, zorder=3,
-                           label=f"learned, {name} regime (Euclidean)")
+                           label=f"learned, {name} (Euclidean)")
                 if "max_overlap_gamma" in rs[0]:
                     ax.scatter([r["d_model"] * j * 1.04 for r, j in zip(rs, jitter)], [r["max_overlap_gamma"] for r in rs],
                                s=34, facecolor="white", edgecolor=COLOURS[regime], linewidth=1.3, zorder=3,
-                               label=f"learned, {name} regime (γ-metric)")
+                               label=f"learned, {name} (γ-metric)")
         ax.set_ylim(-0.03, 1.03)
         ax.axvline(2 * K + 1, color=RULE, linewidth=1, zorder=0)
         ax.set_title(f"{K} belief planes: overlap against the best possible packing", loc="left", fontsize=11, color=INK)
         ax.set_ylabel("largest pairwise overlap (mean cos² of principal angles)")
         ax.set_xlabel(f"residual width d  (readable space ℝᵈ⁻¹; grey line: d − 1 = {2 * K})")
-        ax.legend(frameon=False, fontsize=8.5)
+        ax.legend(frameon=False, fontsize=8.5, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2)
     if has_offsets:
         ax = axes[0, -1]
-        rs = [r for r in rows if "min_offset_sep" in r]
-        jitter = 1 + 0.025 * (np.arange(len(rs)) % 3 - 1)
-        ax.scatter([r["d_model"] * j for r, j in zip(rs, jitter)], [r["min_offset_sep"] for r in rs], s=34,
-                   color=COLOURS["mixture"], edgecolor="white", linewidth=0.7, zorder=3, label="learned, sparse regime")
+        for regime in ["mixture", "mixture-shared"]:
+            rs = [r for r in rows if "min_offset_sep" in r and r["regime"] == regime]
+            if rs:
+                jitter = 1 + 0.025 * (np.arange(len(rs)) % 3 - 1)
+                ax.scatter([r["d_model"] * j for r, j in zip(rs, jitter)], [r["min_offset_sep"] for r in rs], s=34,
+                           color=COLOURS[regime], edgecolor="white", linewidth=0.7, zorder=3, label=NAMES[regime])
+        ax.legend(frameon=False, fontsize=8.5)
         ax.axhline(1, color=MUTED, linewidth=1, linestyle="--")
         ax.text(max(widths), 1.05, "centres one spread apart", ha="right", va="bottom", fontsize=8.5, color=MUTED)
         ax.set_ylim(bottom=0)
