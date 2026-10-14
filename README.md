@@ -208,12 +208,12 @@ Largest overlap between the two belief planes, final layer, among models that re
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 3 | 1 | 1 | 1.00 | 2.4 | 1.00 | 0.05 | – |
 | 4 | 0.50 | 0.67 | 0.75 [0.60, 0.93] | 5.9 | 0.94 [0.92, 0.97] | 0.17 | – |
-| 5 | 0 | 0.50 | 0.29 [0.23, 0.37] | 6.0 | 0.91 [0.90, 0.91] | 0.21 | 0.26 (1 seed) |
+| 5 | 0 | 0.50 | 0.29 [0.23, 0.37] | 6.0 | 0.905 [0.897, 0.914] | 0.21 | 0.26 (1 seed) |
 | 6 | 0 | 0.40 | 0.14 [0.03, 0.23] | 6.0 | 0.94 [0.92, 0.98] | 0.33 | 0.013 [0.003, 0.025] |
 | 8 | 0 | 0.29 | 0.11 [0.09, 0.13] | 5.9 | 0.97 [0.96, 0.97] | 0.38 | 0.020 [0.003, 0.039] |
 
 In the γ-metric the same entries are, by width 4, 5, 6, 8: separate tokens 0.72, 0.28, 0.15, 0.08; shared
-tokens 0.93, 0.91, 0.94, 0.97; dense –, 0.36, 0.021, 0.015.
+tokens 0.93, 0.905, 0.94, 0.97; dense –, 0.36, 0.021, 0.015.
 
 *Offset separation* is the distance between the centres of the two processes' activation patches, divided
 by their typical spread. *Two random planes* is the expected overlap of independent random planes,
