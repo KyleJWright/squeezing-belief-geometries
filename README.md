@@ -27,6 +27,11 @@ is trying to squeeze more than $`n`$ vectors into $`\mathbb{R}^n`$: they can't a
 
 I'm interested in better understanding how this squeezing works in the setting of Shai et al.
 
+### Acknowledgements
+
+I set the questions and the direction, ran every experiment on my laptop, and checked the mathematics. The code and 
+first drafts of the text and derivations were written with Claude (Anthropic). 
+
 ## Summary
 
 **The main finding.** The model keeps what the next-token prediction needs and, as room runs out, gives
@@ -512,16 +517,3 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
 - J. Hoogland, G. Wang, M. Farrugia-Roberts, L. Carroll, S. Wei, D. Murfet.
   [Loss Landscape Degeneracy and Stagewise Development in Transformers](https://arxiv.org/abs/2402.02364)
   (first version titled *The Developmental Landscape of In-Context Learning*). arXiv:2402.02364, 2024.
-
-## How this was made
-
-I set the questions and the direction, ran every experiment on my laptop, checked the mathematics and the
-numbers, and decided what to keep, cut and follow up. The code and first drafts of the text and derivations
-were written with Claude (Anthropic). Several turns in the project came from that checking and questioning:
-asking whether the softmax distorts the linear picture, which space the angles should be measured in,
-whether separate tokens were giving the process away, and whether a model of two processes starts as one
-and later splits in two.
-
-## Acknowledgements
-
-This project grew out of the Iliad Intensive.
