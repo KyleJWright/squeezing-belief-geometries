@@ -27,11 +27,6 @@ is trying to squeeze more than $`n`$ vectors into $`\mathbb{R}^n`$: they can't a
 
 I'm interested in better understanding how this squeezing works in the setting of Shai et al.
 
-### Acknowledgements
-
-I set the questions and the direction, ran every experiment on my laptop, and checked the mathematics. The code and 
-first drafts of the text and derivations were written with Claude (Anthropic). 
-
 ## Summary
 
 **The main finding.** The model keeps what the next-token prediction needs and, as room runs out, gives
@@ -360,8 +355,8 @@ posterior is folded into the prediction, and later positions can recompute it th
 
 ### Does training learn one model and then split it?
 
-Shared-token models at widths 8 and 4 (3 seeds each) were retrained with 18 snapshots between steps 25 and
-12,500, and every snapshot was analysed in the same way.
+Shared-token models at widths 8 and 4 (3 seeds each) were retrained with 19 snapshots between steps 25 and
+15,000 (the last is the finished model), and every snapshot was analysed in the same way.
 
 ![Shared-token training at width 8 (left) and 4 (right): loss above optimum, overlap of the A and B belief planes, offset between their patches, probe R² for which process is running, and each belief's R², by layer and training step](results/disentangle/develop.png)
 
@@ -443,7 +438,7 @@ The full derivations are in [THEORY.md](THEORY.md). The essentials:
 - **Decoders are told the process.** Each process's belief is decoded only on sequences that process
   produced, so a good decode does not by itself show that the model knows which process is running.
   Section 5 probes for the process posterior directly, with linear probes only.
-- **Training dynamics are sampled coarsely.** Section 5's development run has 18 snapshots, 3 seeds and two
+- **Training dynamics are sampled coarsely.** Section 5's development run has 19 snapshots, 3 seeds and two
   widths; a brief transition between snapshots would be missed.
 - **The packing comparison is never constrained.** Dense models keep both beliefs only where orthogonal
   planes are possible, and their near-orthogonality may be inherited from the orthogonal structure of the
@@ -517,3 +512,16 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
 - J. Hoogland, G. Wang, M. Farrugia-Roberts, L. Carroll, S. Wei, D. Murfet.
   [Loss Landscape Degeneracy and Stagewise Development in Transformers](https://arxiv.org/abs/2402.02364)
   (first version titled *The Developmental Landscape of In-Context Learning*). arXiv:2402.02364, 2024.
+
+## How this was made
+
+I set the questions and the direction, ran every experiment on my laptop, checked the mathematics and the
+numbers, and decided what to keep, cut and follow up. The code and first drafts of the text and derivations
+were written with Claude (Anthropic). Several turns in the project came from that checking and questioning:
+asking whether the softmax distorts the linear picture, which space the angles should be measured in,
+whether separate tokens were giving the process away, and whether a model of two processes starts as one
+and later splits in two.
+
+## Acknowledgements
+
+This project grew out of the Iliad Intensive.
