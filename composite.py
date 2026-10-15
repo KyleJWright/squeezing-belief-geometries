@@ -120,7 +120,14 @@ class Composite:
             return P
         # Mixture: posterior over processes times each process's prediction.
         P = np.zeros((N, L, self.d_vocab))
-        logpost = np.zeros((N, L, self.K))
+        post, preds = self._posterior_and_preds(tokens)
+        for k in range(self.K):
+            off = 3 * k if self.vocab == "disjoint" else 0
+            P[..., off:off + 3] += post[..., k:k + 1] * preds[k]
+        return P
+
+    def _posterior_and_preds(self, tokens):
+        logpost = np.zeros(tokens.shape + (self.K,))
         preds = []
         for k, comp in enumerate(self.components):
             sub = self.sub_tokens(tokens, k)
@@ -133,10 +140,13 @@ class Composite:
             preds.append(np.einsum("nls,xsr->nlx", B, comp.T))
         post = np.exp(logpost - logpost.max(-1, keepdims=True))
         post /= post.sum(-1, keepdims=True)
-        for k in range(self.K):
-            off = 3 * k if self.vocab == "disjoint" else 0
-            P[..., off:off + 3] += post[..., k:k + 1] * preds[k]
-        return P
+        return post, preds
+
+    def process_posterior(self, tokens):
+        """Mixture only: exact posterior probability of each process after each prefix, (N, L, K)."""
+        if self.regime != "mixture":
+            raise ValueError("the process posterior is only defined for the mixture regime")
+        return self._posterior_and_preds(tokens)[0]
 
     def optimal_loss(self, n_ctx, rng=None, n=20000):
         """Bayes-optimal cross-entropy, nats per token (exact for parallel, Monte Carlo for mixture)."""

@@ -48,6 +48,10 @@ I'm interested in better understanding how this squeezing works in the setting o
   interference is filtered out by a nonlinearity. Here, with separate tokens, the patches are told apart by
   an offset that the token embeddings supply; with shared tokens there is no offset, and the two beliefs
   share one plane even when there is room for two.
+- **Disentangling.** With shared tokens the model never splits into two belief models. At width 8 it keeps
+  one shared plane and adds a direction that tracks which process is running, as well as an optimal
+  observer can. Under squeezing that direction is the first thing given up: at width 4 the model learns it
+  early in training and then lets it go.
 
 ## Setup
 
@@ -250,14 +254,116 @@ A natural reading: whichever process is running, the next-token prediction is a 
 3 tokens, and one plane can carry it for both. Each process's belief maps to that prediction by an
 invertible affine map, so each belief is linearly decodable from the shared plane once the process is
 known, and the two decoders find the same plane. This is consistent with the final layer holding mainly the
-next-token prediction, not two separate beliefs, but the experiment does not show it: the decoders are told
-which process produced each sequence, and whether the model itself tracks the process has not been
-measured.
+next-token prediction, not two separate beliefs. The decoders here are told which process produced each
+sequence; [section 5](#5-disentangling-does-the-model-know-which-process-it-is-in) asks whether the model
+itself tracks the process.
 
 **Robustness.** Angles depend on the choice of inner product. Recomputed in the metric the output head's
 LayerNorm imposes (the γ-metric), and with planes fitted on optimal logits instead of beliefs, the
 conclusions are unchanged. The two fits find the same plane for every represented process (agreement
 ≥ 0.999). See [What is measured](#what-is-measured).
+
+## 5. Disentangling: does the model know which process it is in?
+
+With shared tokens nothing tells the model which process produced a sequence. The exact posterior
+$`\pi = P(A \mid \text{prefix})`$ says how far the evidence has gone, and it goes less far than one might
+expect: guessing the process from $`\pi`$ is right only 62% of the time after two tokens and 81% after ten.
+The full belief therefore lives in the 5-simplex over (process, state), the *join* of the two triangles, and
+$`\pi`$ says where along the join it sits. `disentangle.py` asks two questions about how the model handles
+this.
+
+### What to expect
+
+- **Identification is slow.** For an optimal observer the log-odds between two processes grow, on average,
+  linearly in the number of tokens, at a rate set by how statistically distinguishable the processes are,
+  so the posterior concentrates exponentially. A and B are similar, and within a context of 10 the exact
+  posterior gets only as far as the Bayes accuracies above. That curve, not 100%, is the benchmark for any
+  probe.
+- **Two candidate geometries.** Shai et al. (2024) find that the residual stream carries the full belief
+  state, not just the next-token prediction. Here that is the 5-dimensional joint belief, with coordinates
+  $`(\pi, \eta_A, \eta_B)`$. The output, by contrast, needs only the 2-dimensional prediction
+  $`\pi\, \eta_A N_A + (1 - \pi)\, \eta_B N_B`$, in which $`\pi`$ is already folded. So the final layer could
+  hold anything from the 2-dimensional prediction up to the full 5-dimensional belief.
+- **Mixture, not product.** The dense regime is a factorial HMM (Ghahramani & Jordan 1997): its belief
+  is a product of the two processes' beliefs, so there is nothing to disentangle. The sparse regime with
+  shared tokens is a mixture, whose belief lives on the join. Disentangling here therefore means tracking
+  $`\pi`$, not separating two independent beliefs.
+- **"One model, then two" during training.** Several settings learn a merged description first and split
+  it later: causal-state splitting reconstructs a process's minimal predictive model by starting from one
+  state and splitting it when histories predict differently (Shalizi & Klinkner 2004); in deterministic
+  annealing, cluster centres split at critical temperatures (Rose 1998); and deep networks often learn in
+  stages (Saxe, McClelland & Ganguli 2019; Hoogland et al. 2024). This suggests the hypothesis tested below:
+  the shared-token model first learns one averaged process, then splits into two.
+- **What competes for room.** In the toy models of Elhage et al. (2022), which features a model represents
+  depends on their value relative to the dimensions available. Here $`\pi`$ competes with the prediction
+  for the $`d - 2`$ dimensions the output head can use (section 2), and the prediction is worth far more.
+
+### Does it track the process?
+
+A ridge probe is fitted from the residual stream to $`\pi`$ at every layer, on the shared-token models of
+section 3.
+
+![Probe for which process is running: accuracy by position against the Bayes-optimal guess (left), probe R² by layer and width (middle), and how confident the exact posterior is (right)](results/disentangle/probe.png)
+
+| Width | 8 | 6 | 5 | 4 | 3 |
+| --- | --- | --- | --- | --- | --- |
+| Probe $`R^2`$ for $`\pi`$, final layer | 0.87 | 0.62 | 0.32 | 0.12 | 0.08 |
+| Probe accuracy after 10 tokens (Bayes: 0.806) | 0.798 | 0.762 | 0.665 | 0.585 | 0.563 |
+| Loss above optimum | 0.01% | 0.03% | 0.05% | 0.15% | 2.0% |
+
+(Means over 3 seeds; accuracy uses each model's best layer. All from `results/disentangle/probe.json`.)
+
+At width 8 the model tracks the process essentially as well as possible: its probe follows the Bayes-optimal
+accuracy at every position. The posterior is built up through the layers ($`R^2`$ 0.39, 0.60, 0.83, 0.87 after
+blocks 1–4). Combined with section 4, the final layer holds **one shared belief plane plus a separate
+direction for $`\pi`$**, as far as linear probes can tell: between the two candidate geometries, nearer the
+low-dimensional end, and not two separate belief models. (Because each plane is fitted on its own process's
+sequences, the experiment cannot rule out that further directions carry $`\eta_A`$ and $`\eta_B`$
+separately.) As a control, with separate tokens the probe reaches $`R^2 = 0.98`$, because the first
+token gives the process away.
+
+As the stream narrows, process tracking is the first thing to go. Loss stays within 0.15% of optimal down to
+width 4, but the probe falls to $`R^2 = 0.12`$ and its accuracy stalls after a few tokens. This fits the
+readout argument of section 2: the output head has $`d - 2`$ dimensions, the prediction needs 2, and only
+what is left can carry $`\pi`$. At width 4 nothing is left, and the small remaining signal may be what the
+prediction itself reveals (A's predictions are more peaked than B's). Dropping $`\pi`$ costs little: the
+optimal prediction already mixes the two processes' predictions in proportion to $`\pi`$, so the
+posterior is folded into the prediction, and later positions can recompute it through attention.
+
+### Does training learn one model and then split it?
+
+Shared-token models at widths 8 and 4 (3 seeds each) were retrained with 18 snapshots between steps 25 and
+12,500, and every snapshot was analysed in the same way.
+
+![Shared-token training at width 8 (left) and 4 (right): loss above optimum, overlap of the A and B belief planes, offset between their patches, probe R² for which process is running, and each belief's R², by layer and training step](results/disentangle/develop.png)
+
+| Step | 25 | 200 | 400 | 1,000 | 4,000 | 15,000 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Width 8: loss above optimum | 2.6% | 0.87% | 0.35% | 0.28% | 0.13% | 0.03% |
+| Width 8: plane overlap (final layer) | 0.99 | 0.89 | 0.92 | 0.93 | 0.95 | 0.96 |
+| Width 8: offset (spreads) | 0.04 | 0.17 | 0.25 | 0.30 | 0.34 | 0.38 |
+| Width 8: probe $`R^2`$ for $`\pi`$ | 0.33 | 0.53 | 0.68 | 0.68 | 0.79 | 0.87 |
+| Width 4: loss above optimum | 7.0% | 2.1% | 1.2% | 0.52% | 0.30% | 0.14% |
+| Width 4: probe $`R^2`$ for $`\pi`$ | 0.02 | 0.17 | 0.20 | 0.18 | 0.13 | 0.12 |
+
+The hypothesis is not borne out: the network never splits into two independent models.
+
+- **Width 8: one model gains a coordinate.** The probe for $`\pi`$ rises steadily over training, and the
+  offset between the A and B patches grows with it: the activations shift along a direction that tracks
+  the process. The two belief planes stay nearly identical throughout. They separate a little around steps
+  150–400, while loss is falling fastest (overlap down to 0.89 on average, 0.85 in one seed), then merge back
+  to 0.96. The closest thing to a split is this transient, and it reverses.
+- **Width 4: learned, then given up.** The probe rises to about 0.2 by step 600 (0.44 in one seed) and then
+  falls back to 0.12, and the offset does the same (0.22, then 0.16), while loss keeps improving. The model
+  tracks the process early and lets it go as it sharpens the prediction, which fills its two usable
+  dimensions. A feature is learned and then squeezed out by a more valuable one.
+- **No sharp transition.** Loss falls smoothly at this snapshot resolution; nothing looks like a sudden
+  phase change.
+
+Two cautions. Early in training the planes overlap almost completely for free, since both beliefs are
+driven by the same token embeddings, so only a later drop would count as a split. And the probe's early
+$`R^2`$ (0.33 at step 25 at width 8) is largely free too: $`\pi`$ depends mainly on simple token statistics,
+such as how often tokens repeat, which even a barely trained network partly encodes.
 
 ## Theory: belief planes, LayerNorm and Grassmannian packing
 
@@ -502,8 +608,10 @@ cannot say whether the model "uses" beliefs or logits as coordinates on it.
   process is running. The shared-token run confirms that the large offset between the patches comes from
   this.
 - **Decoders are told the process.** Each process's belief is decoded only on sequences that process
-  produced, so a good decode does not show that the model knows which process is running. Decoding the
-  posterior probability of each process from the residual stream would test that; it has not been done.
+  produced, so a good decode does not by itself show that the model knows which process is running.
+  Section 5 probes for the process posterior directly, with linear probes only.
+- **Training dynamics are sampled coarsely.** Section 5's development run has 18 snapshots, 3 seeds and two
+  widths; a brief transition between snapshots would be missed.
 - **The packing comparison is never constrained.** Dense models keep both beliefs only where orthogonal
   planes are possible, and their near-orthogonality may be inherited from the orthogonal structure of the
   optimal logits rather than from pressure to pack.
@@ -530,6 +638,9 @@ pip install -r requirements.txt
 python run_simplex.py --steps 300 --seeds 0    # smoke test, a few minutes, blurry images
 python run_simplex.py                          # full run: 69 models over seeds 0, 1, 2
 python memory_value.py                         # value of each process's memory (seconds)
+python disentangle.py probe                    # which-process probe on the trained models (minutes)
+python disentangle.py train                    # 6 shared-token models with training snapshots
+python disentangle.py develop                  # analyse the snapshots (minutes)
 ```
 
 `run_simplex.py` trains in parallel, one model per CPU core, skips models already trained, and writes
@@ -548,6 +659,7 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
 | `capacity.py` | Belief planes, overlaps (Euclidean, γ-metric, logit coordinates), offset separation |
 | `packing.py` | Optimal Grassmannian packings and the comparison figure |
 | `memory_value.py` | Value of each process's memory in nats |
+| `disentangle.py` | Probe for which process is running; training-dynamics analysis from snapshots |
 | `results/` | Figures, `metrics.csv` (every number above, mean/min/max over seeds), per-seed analysis files |
 
 ## References
@@ -561,6 +673,16 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
   *Experimental Mathematics* 5(2), 139–159, 1996.
 - R. A. Rankin. The closest packing of spherical caps in n dimensions. *Proceedings of the Glasgow
   Mathematical Association* 2, 139–144, 1955.
+- Z. Ghahramani, M. I. Jordan. Factorial hidden Markov models. *Machine Learning* 29, 245–273, 1997.
+- C. R. Shalizi, K. L. Klinkner. Blind construction of optimal nonlinear recursive predictors for discrete
+  sequences. *Uncertainty in Artificial Intelligence* (UAI), 2004.
+- K. Rose. Deterministic annealing for clustering, compression, classification, regression, and related
+  optimization problems. *Proceedings of the IEEE* 86(11), 2210–2239, 1998.
+- A. M. Saxe, J. L. McClelland, S. Ganguli. A mathematical theory of semantic development in deep neural
+  networks. *PNAS* 116(23), 11537–11546, 2019.
+- J. Hoogland, G. Wang, M. Farrugia-Roberts, L. Carroll, S. Wei, D. Murfet.
+  [Loss Landscape Degeneracy and Stagewise Development in Transformers](https://arxiv.org/abs/2402.02364)
+  (first version titled *The Developmental Landscape of In-Context Learning*). arXiv:2402.02364, 2024.
 
 ## Acknowledgements
 

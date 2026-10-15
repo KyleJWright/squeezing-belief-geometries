@@ -56,6 +56,8 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--log_every", type=int, default=1000)
     ap.add_argument("--save_every", type=int, default=5000)
+    ap.add_argument("--snapshots", type=int, nargs="*", default=[],
+                    help="also save a separate checkpoint <out>_step<N>.pt at each of these steps")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
@@ -97,6 +99,10 @@ def main():
             running = []
             print(f"step {step:>7}  loss {mean:.4f}  ratio to optimal {mean / opt_loss:.4f}  "
                   f"({time.time() - t0:.0f}s)", flush=True)
+        if step in args.snapshots:
+            save_checkpoint(args.out[:-3] + f"_step{step}.pt", model.cpu(), label,
+                            {"step": step, "optimal_loss": opt_loss, "spec": spec, "final_loss": float(loss.item())})
+            model.to(args.device)
         if step % args.save_every == 0 or step == args.steps:
             save_checkpoint(args.out, model.cpu(), label,
                             {"step": step, "optimal_loss": opt_loss, "spec": spec, "final_loss": float(loss.item())})
