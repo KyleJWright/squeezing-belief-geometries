@@ -2,8 +2,10 @@
 
 Reproducing the belief-state simplex of Shai et al. (2024) in a small transformer, then squeezing it:
 what happens to the simplex when the residual stream is too narrow to hold it, and when two processes
-must share a stream with room for one but not both? The learned geometry is compared with the
-Grassmannian packing problem.
+must share a stream with room for one but not both?
+
+The short answer: **the model keeps what its output needs and, as room runs out, gives up the rest,
+cheapest first.** The limit is set by what the output layer can read, not by how many directions fit in the space.
 
 ![One Mess3 process: the belief simplex in the final residual stream as the residual width shrinks](results/simplex_single.png)
 
@@ -27,31 +29,47 @@ I'm interested in better understanding how this squeezing works in the setting o
 
 ## Summary
 
+**The main finding.** The model keeps what the next-token prediction needs and, as room runs out, gives
+up everything else, cheapest first. Each experiment shows a different piece of this:
+
 - **Reproduction.** A 4-layer transformer trained on the Mess3 process carries the fractal belief simplex
-  in its final residual stream ($`R^2 = 1.00`$ on held-out prefixes). Shuffling beliefs before fitting gives
+  in its final residual stream ($`R^2 = 1.00`$ on held-out prefixes); shuffling beliefs before fitting gives
   $`R^2 = 0.00`$.
-- **One process, too narrow.** The simplex degrades gracefully down to width 4 and fails at width 3, where
-  the decoded beliefs collapse onto a curve. The threshold matches a LayerNorm argument: if predictions vary
-  smoothly with the belief, a model of width $`d`$ can only produce a family of predictions with $`d-2`$
-  parameters, and Mess3 needs 2.
-- **Two processes.** When only one process is active at a time (*sparse*), both survive down to width 4.
-  With separate tokens per process the two belief patches share directions but sit apart; with one shared
-  set of tokens they lie on top of each other, in a single plane, at every width. When both are active at
-  once (*dense*), the model gives up one process entirely as width falls, and it gives up the one whose
-  memory is worth ~30 times less.
-- **Packing.** In the dense regime, whenever both beliefs are kept their planes are close to orthogonal,
-  the optimal Grassmannian packing. In the sparse regime the overlaps are far above optimal, because the
-  sparse problem is an arrangement of affine patches, not a packing of subspaces.
-- **Link to superposition.** The regimes show, in this setting, the two behaviours of the toy models of
-  Elhage et al. (2022): when features are dense the model keeps the most valuable and drops the rest; when
-  they are sparse it lets them share directions. The sharing mechanism differs. In Elhage et al.
-  interference is filtered out by a nonlinearity. Here, with separate tokens, the patches are told apart by
-  an offset that the token embeddings supply; with shared tokens there is no offset, and the two beliefs
-  share one plane even when there is room for two.
-- **Disentangling.** With shared tokens the model never splits into two belief models. At width 8 it keeps
-  one shared plane and adds a direction that tracks which process is running, as well as an optimal
-  observer can. Under squeezing that direction is the first thing given up: at width 4 the model learns it
-  early in training and then lets it go.
+- **One process, too narrow.** Fine fractal detail goes first, at almost no cost in loss. The simplex
+  survives down to width 4 and fails at width 3, where the decoded beliefs collapse onto a curve. The
+  threshold matches what the output layer can read: after LayerNorm, a model of width $`d`$ can produce a
+  family of predictions with at most $`d-2`$ parameters, and Mess3 needs 2.
+- **Two processes at once (dense).** As width falls, the model drops one process entirely, and it is the
+  one whose memory is worth ~30 times less in loss. Dropping it costs almost exactly what that memory is
+  worth (0.50% of the optimal loss).
+- **Two processes, one at a time (sparse).** Both survive to width 4. With one shared set of tokens the two
+  beliefs collapse onto a single plane at every width, even with room for two, because the output needs
+  only one prediction, and it costs nothing measurable.
+- **Which process is running?** With room to spare (width 8) the model also tracks which process is
+  running, as well as an optimal observer can, in one extra direction. Squeezed, that is the first thing to
+  go: at width 4 the model learns it early in training and then gives it up.
+- **Packing was the wrong lens.** I expected the Grassmannian packing problem to describe how the beliefs
+  share the space. It mostly does not: when both beliefs are kept their planes are near-orthogonal, but
+  the readout limit always binds first, and in the sparse case the problem is not a packing problem at all.
+
+## Why this matters
+
+Two lessons from this toy setting may be worth testing more widely.
+
+- **Whether a latent variable is represented depends on room, not only on whether it is useful.** The same
+  training gives a model that tracks which process is running (width 8) and one that learns it briefly and
+  then gives it up (width 4) while staying within 0.15% of the optimal loss, because the output does not
+  need it. So a
+  probe that finds nothing in a narrow model says little about whether the variable matters to the task or
+  can be learned, and a signal found in a wide model need not survive in a narrower one. Methods that look
+  for latent knowledge with probes need to allow for this.
+- **What gets superposed or dropped is decided by the readout.** The two behaviours of Elhage et al.'s
+  toy models reappear: dense features force the least valuable one out, sparse ones share directions. But
+  here what decides is what the output needs and what each piece is worth, not how many vectors fit in the
+  space. With separate tokens the sparse patches are told apart by an offset supplied by the token
+  embeddings; with shared tokens they share one plane outright.
+
+These are small models trained on a toy process; whether the lessons carry over is an open question.
 
 ## Setup
 
@@ -118,7 +136,7 @@ the curve in the width-3 image. This is a heuristic, not a theorem: with a conte
 many beliefs, and nothing forces the network's map from prefixes to predictions to be smooth. The curve is
 also in the residual stream before the LayerNorm, which is not forced to be one-dimensional, so it is
 consistency rather than proof. The argument and its assumptions are in the
-[theory section](#theory-belief-planes-layernorm-and-grassmannian-packing).
+[theory](THEORY.md#which-space-layernorm).
 
 **Width 2 is a different failure.** At $`d = 2`$ the LayerNorm sends a line to two points, so it is a sign
 function with zero derivative (up to its small $`\epsilon`$). No gradient reaches the residual stream, and only
@@ -193,15 +211,20 @@ is computed as if the process were known. With shared tokens the model cannot kn
 a sequence, so even the Bayes-optimal predictor would not carry these beliefs exactly, and the ceiling is
 below 1.
 
-The geometry is the striking part: see [section 4](#4-comparison-with-grassmannian-packing).
+The geometry is the striking part: see [section 4](#4-geometry-is-it-a-packing-problem).
 
-## 4. Comparison with Grassmannian packing
+## 4. Geometry: is it a packing problem?
 
 Each belief occupies a 2-dimensional plane in the residual stream: the directions the activation moves as
 that belief moves. The *overlap* of two planes is the mean $`\cos^2`$ of their two principal angles (0 for
 orthogonal planes, 1 for identical ones). Planes are measured in the part of the stream that LayerNorm can
-see, which has dimension $`d - 1`$. The question is how close the learned arrangement comes to the best
-possible one.
+see, which has dimension $`d - 1`$.
+
+The starting hypothesis was the cartoon of superposition: two beliefs squeezed into too little room should
+arrange their planes as an optimal Grassmannian packing, as far apart as the space allows. **This turned
+out to be mostly the wrong lens.** When both beliefs are kept, their planes are indeed near-orthogonal,
+but that happens only at widths where orthogonality is easy, and the readout limit binds before packing
+ever does. In the sparse case the problem is not a packing problem at all.
 
 ![Learned belief planes against the optimal Grassmannian packing (left) and how far apart the sparse patches sit (right)](results/packing.png)
 
@@ -232,7 +255,7 @@ noticeably (0.26).
 Two cautions. First, the comparison never reaches the regime where packing is constrained: no dense model
 keeps both beliefs at a width where orthogonal planes are impossible. Second, near-orthogonality has a
 simpler possible cause than packing pressure. The optimal logits for A and B lie in orthogonal subspaces of
-logit space ([softmax section](#the-softmax-and-why-it-favours-linear-structure)), so planes that the output
+logit space ([theory](THEORY.md#the-softmax-and-why-it-favours-linear-structure)), so planes that the output
 head maps onto them through a reasonably well-conditioned map come out nearly orthogonal anyway. The data
 cannot tell these apart.
 
@@ -261,7 +284,7 @@ itself tracks the process.
 **Robustness.** Angles depend on the choice of inner product. Recomputed in the metric the output head's
 LayerNorm imposes (the γ-metric), and with planes fitted on optimal logits instead of beliefs, the
 conclusions are unchanged. The two fits find the same plane for every represented process (agreement
-≥ 0.999). See [What is measured](#what-is-measured).
+≥ 0.999). See [What is measured](THEORY.md#what-is-measured).
 
 ## 5. Disentangling: does the model know which process it is in?
 
@@ -365,224 +388,29 @@ driven by the same token embeddings, so only a later drop would count as a split
 $`R^2`$ (0.33 at step 25 at width 8) is largely free too: $`\pi`$ depends mainly on simple token statistics,
 such as how often tokens repeat, which even a barely trained network partly encodes.
 
-## Theory: belief planes, LayerNorm and Grassmannian packing
+## Theory in brief
 
-### Belief planes
+The full derivations are in [THEORY.md](THEORY.md). The essentials:
 
-A Mess3 process has three hidden states, so its belief $`\eta`$ lies in the triangle
-$`\Delta^2 = \{\eta \in \mathbb{R}^3_{\ge 0} : \textstyle\sum_i \eta_i = 1\}`$. This lies in the affine plane
-$`\sum_i \eta_i = 1`$ in $`\mathbb{R}^3`$, whose direction space (the tangent space at every interior point) is
-the 2-plane $`T = \{v \in \mathbb{R}^3 : \sum_i v_i = 0\}`$. Let $`c = (\tfrac13, \tfrac13, \tfrac13)`$ be the
-centre of the triangle; then $`\eta - c \in T`$ for every belief. `capacity.py` uses an orthonormal basis
-$`E`$ of $`T`$, so a belief has tangent coordinates $`u = E^\top(\eta - c) \in \mathbb{R}^2`$.
-
-Following Shai et al., the residual stream embeds beliefs (approximately) affinely: for process $`k`$,
-
-```math
-a \;\approx\; m_k + M_k(\eta - c), \qquad M_k : T \to \mathbb{R}^d.
-```
-
-The **belief plane** of process $`k`$ is $`V_k = \mathrm{im} M_k`$, a point of the Grassmannian
-$`\mathrm{Gr}(2, d)`$, and its **belief patch** is the affine image $`m_k + M_k(\Delta^2 - c)`$. `capacity.py`
-estimates $`M_k`$ by regressing activations on beliefs.
-
-### Which space: LayerNorm
-
-Every read of the residual stream goes through a LayerNorm. For an activation $`a \in \mathbb{R}^d`$,
-
-```math
-\mathrm{LN}(a) = \gamma \odot \frac{\sqrt{d}\, P a}{\lVert P a \rVert} + b, \qquad P = I - \tfrac{1}{d}\mathbf{1}\mathbf{1}^\top,
-```
-
-where $`\mathbf{1} = (1, \dots, 1) \in \mathbb{R}^d`$, so $`P`$ is the orthogonal projector onto
-$`\mathbf{1}^\perp = \{z : \sum_i z_i = 0\}`$ (it subtracts the mean coordinate). The learned vectors
-$`\gamma, b \in \mathbb{R}^d`$ are the scale and bias, and $`\odot`$ is the coordinatewise product,
-$`(\gamma \odot z)_i = \gamma_i z_i`$, i.e. $`\gamma \odot z = \mathrm{diag}(\gamma)\, z`$.
-(The small $`\epsilon`$ added to the norm in practice is ignored.)
-
-Two consequences follow.
-
-1. **The readable space is $`\mathbf{1}^\perp \cong \mathbb{R}^{d-1}`$.** The component of $`a`$ along
-   $`\mathbf{1}`$ is discarded, so the planes that matter live in $`\mathrm{Gr}(2, d-1)`$; they are measured
-   after projecting by $`P`$.
-2. **The readout sees a sphere of dimension $`d-2`$.** $`\sqrt{d}\,Pa/\lVert Pa \rVert`$ lies on the sphere of radius
-   $`\sqrt d`$ in $`\mathbf{1}^\perp`$, a manifold of dimension $`d-2`$, which $`\mathrm{diag}(\gamma)`$ and $`b`$
-   map to an ellipsoid (degenerate if some $`\gamma_i = 0`$). The logits are linear in this point, so the
-   next-token distributions a model of width $`d`$ can produce form the image of a smooth map from a
-   manifold of dimension $`d-2`$.
-
-For Mess3 (parameters $`x, \alpha`$, with $`y = 1 - 2x`$ and $`\beta = (1-\alpha)/2`$ as in `processes.py`)
-the next-token distribution, as a row vector, is $`p(\cdot \mid \eta) = \eta N`$ with
-$`N_{ik} = \Pr(\text{token } k \mid \text{state } i)`$. It is an injective affine function of $`\eta`$
-($`N`$ is invertible whenever $`\alpha \ne \beta`$ and $`x \ne y`$). So over a set of beliefs $`B \subset \Delta^2`$,
-an optimal predictor's outputs form an affine copy of $`B`$. The output head is a smooth map $`g`$ from the
-sphere $`S^{d-2}`$ to distributions, $`g(S^{d-2})`$ has Hausdorff dimension at most $`d-2`$, and an affine
-bijection preserves Hausdorff dimension. Exact optimal prediction on $`B`$ therefore needs
-
-```math
-d - 2 \;\ge\; \dim_H B .
-```
-
-No assumption is needed about how the network maps prefixes to the sphere; only the output head has to be
-smooth. Three caveats decide how much this says.
-
-- **Finite context.** With a context of 10, $`B`$ is a finite set, of dimension 0, and the bound is empty:
-  a curve can pass through any finite set of points. It bites only in the limit of long contexts, where
-  $`B`$ fills out the fractal attractor. For finite contexts it is a heuristic: a map with bounded weights
-  cannot wiggle enough to thread a curve through tens of thousands of nearby points.
-- **Fractal dimension.** The attractor's Hausdorff dimension lies between 0 and 2. The threshold $`d \ge 4`$
-  assumes it exceeds 1, which the images suggest but which is not computed here.
-- **Two processes.** The table treats each belief set as 2-dimensional, as a filled region would be. For the
-  fractals themselves the sparse bound is $`d - 2 \ge \max(\dim_H B_A, \dim_H B_B)`$ and the dense one is
-  $`d - 2 \ge \dim_H (B_A \times B_B) \ge \dim_H B_A + \dim_H B_B`$, which gives $`d \ge 6`$ only if the two
-  dimensions sum to more than 3.
-
-| Setting | Optimal predictions | Dimension (filled regions) | Readout bound |
-| --- | --- | --- | --- |
-| One process | $`\{\eta N\}`$ | 2 | $`d \ge 4`$ |
-| Two processes, sparse | union of two 2-dimensional families | 2 | $`d \ge 4`$ |
-| Two processes, dense | products $`p_A(t_A)\,p_B(t_B)`$ over token pairs $`(t_A, t_B)`$ | 4 | $`d \ge 6`$ |
-
-This is a necessary condition for *exact* prediction only: below it the model must approximate, and
-the measured loss shows the cost.
-
-At $`d = 2`$ the sphere is $`S^0`$, two points, and the normalisation $`z \mapsto z/\lvert z\rvert`$ on the line
-$`\mathbf{1}^\perp`$ is a sign function. Its derivative vanishes away from 0, so no gradient passes back
-through any LayerNorm.
-
-### Overlap, principal angles and chordal distance
-
-For planes $`V, W \in \mathrm{Gr}(2, n)`$ with orthonormal bases $`Q_V, Q_W`$, the singular values of
-$`Q_V^\top Q_W`$ are $`\cos\theta_1 \ge \cos\theta_2`$, the cosines of the principal angles. The overlap used
-throughout is
-
-```math
-\mathrm{ov}(V, W) = \tfrac12 \lVert Q_V^\top Q_W \rVert_F^2 = \tfrac12\left(\cos^2\theta_1 + \cos^2\theta_2\right) = \tfrac12 \mathrm{tr}(P_V P_W),
-```
-
-and the chordal distance is $`d_c^2 = \sin^2\theta_1 + \sin^2\theta_2 = \tfrac12\lVert P_V - P_W\rVert_F^2 = 2\,(1 - \mathrm{ov})`$.
-For independent uniformly random planes, $`\mathbb{E}\,\mathrm{tr}(P_V P_W) = 4/n`$, so the mean overlap
-is $`2/n`$.
-
-### What is measured
-
-The numbers in this README come from these choices, stated explicitly because angles are not
-canonical:
-
-1. **Space.** The final residual stream (the input to the output head, before its LayerNorm), with
-   the all-ones direction projected out by $`P`$: the readable space $`\mathbf{1}^\perp \cong \mathbb{R}^{d-1}`$.
-2. **Planes.** For each process, the column span of $`P M_k`$, where $`M_k`$ comes from a least-squares fit
-   of activations on beliefs. These are the *linear direction spaces* of the belief patches: points of
-   $`\mathrm{Gr}(2, d-1)`$. Offsets $`m_k`$ are measured separately, as the distance between process centres
-   divided by the within-process spread.
-3. **Metric.** Overlaps need an inner product, and the Euclidean one on the residual stream is a
-   convention: the Grassmannian is invariant under $`GL`$, but principal angles are invariant only under
-   orthogonal maps. So overlaps are reported in two metrics on $`\mathbf{1}^\perp`$: the **Euclidean** one,
-   and the **γ-metric**
-   $`\langle z, w\rangle_\gamma = z^\top \mathrm{diag}(\gamma)^2\, w = (\gamma \odot z)\cdot(\gamma \odot w)`$,
-   where $`\gamma`$ is the output head's LayerNorm scale. The γ-metric is the geometry the readout's first
-   linear step imposes. Conclusions are drawn only where the two agree.
-4. **Not modelled.** The normalisation $`a \mapsto \sqrt d\,Pa/\lVert Pa\rVert`$ maps a flat patch not
-   through the origin to a curved patch on the sphere, whose tangent plane varies from point to point.
-   The planes are measured before this step. The dimension counts above do not depend on any of these
-   choices.
-
-The readout referred to throughout is the output head,
-$`\text{logits} = W_U\,\mathrm{LN}(a) + b_U`$, followed by a softmax.
-
-### The packing problem and its bounds
-
-**Grassmannian packing** (Conway, Hardin & Sloane 1996): place $`K`$ planes in $`\mathbb{R}^n`$ to minimise
-the largest pairwise overlap, equivalently to maximise the smallest chordal distance.
-
-- **Orthogonality is possible iff $`2K \le n`$.** For two planes, $`n \ge 4`$.
-- **Two planes in $`\mathbb{R}^3`$** must meet in a line, since $`\dim(V \cap W) \ge 2 + 2 - 3 = 1`$. So
-  $`\theta_1 = 0`$, and the best is $`\theta_2 = \pi/2`$, giving $`\mathrm{ov} = \tfrac12`$.
-- **The simplex (Rankin) bound.** Let $`S = \sum_k P_{V_k}`$, so $`\mathrm{tr} S = 2K`$ and
-  $`\mathrm{rank} S \le n`$. By Cauchy–Schwarz on its eigenvalues, $`\lVert S\rVert_F^2 \ge (2K)^2/n`$.
-  Expanding $`\lVert S \rVert_F^2 = 2K + \sum_{i \ne j}\mathrm{tr}(P_iP_j)`$ gives
-
-  ```math
-  \max_{i\ne j} \mathrm{ov}(V_i, V_j) \;\ge\; \mathrm{mean}_{i\ne j} \mathrm{ov}(V_i, V_j) \;\ge\; \frac{2K/n - 1}{K - 1}.
-  ```
-
-  Equality needs $`S = \tfrac{2K}{n} I`$ (a tight fusion frame) *and* all pairwise overlaps equal. Three
-  planes in $`\mathbb{R}^4`$ attain it (overlap $`\tfrac14`$). Two planes in $`\mathbb{R}^3`$ do not: the
-  bound gives $`\tfrac13`$, but the true optimum is $`\tfrac12`$, because the shared line forces unequal
-  principal angles.
-
-`packing.py` computes the optimum numerically and reproduces both cases.
-
-### Why packing matters in the dense regime, and not in the sparse one
-
-**Dense: simultaneous decoding.** Both beliefs are active at once, $`a = m + M_A u_A + M_B u_B`$. Decoding
-both linearly needs $`[M_A\; M_B]`$ to be injective, i.e. $`V_A \cap V_B = 0`$: linear independence, not
-orthogonality. Orthogonality matters for noise. The Gram matrix of $`[Q_A\; Q_B]`$ is
-$`\begin{pmatrix} I & C \\ C^\top & I \end{pmatrix}`$ with $`C = Q_A^\top Q_B`$, whose eigenvalues are
-$`1 \pm \cos\theta_i`$. Least-squares decoding therefore amplifies noise in the activations by up to
-
-```math
-\frac{1}{\sqrt{1 - \cos\theta_1}},
-```
-
-which is smallest when the planes are as far apart as possible. A model that must read both beliefs
-through noise is pushed towards the optimal packing.
-
-**Sparse: one patch at a time.** Only one process is active, so the model must (i) tell which patch the
-activation is in, and (ii) decode the belief within it. Two compact convex patches are disjoint exactly
-when a hyperplane separates them, and nothing in this constrains the directions $`V_A, V_B`$. Two
-triangles can share a plane and sit side by side. The relevant object is an arrangement of *affine*
-patches, not a packing of linear subspaces, and the Grassmannian overlap can be large at no cost.
-
-**Sparse with shared tokens: a common quotient.** With one set of tokens, the optimal prediction for either
-process is a distribution over the same 3 tokens: $`p = \eta_A N_A`$ or $`p = \eta_B N_B`$, both in the same
-2-dimensional family. If the final layer carries $`p`$ (or any affine image of it), both beliefs map into a
-single plane and the patches overlap, with no need to tell the processes apart there. Separate planes would
-be needed only if something downstream had to read the two beliefs separately, and at the final layer
-nothing does.
-
-### The softmax, and why it favours linear structure
-
-The output is $`\mathrm{softmax}(\ell)`$, a nonlinear function of the logits $`\ell`$. Does this warp the
-linear picture? It acts after the residual stream, so it cannot bend the planes measured there. What it
-changes is which residual geometry is *useful*, and the natural linear target is the logits, not the
-probabilities. Logits are defined up to an additive constant, so take them centred.
-
-**One process.** With three tokens, centred logits live in a plane, and the optimal ones form
-$`\eta \mapsto \log(\eta N)`$ (centred). This is a smooth, injective map of the triangle onto a region of that
-plane. So the softmax curves coordinates *within* a plane; it does not take the patch out of it.
-
-**Dense: products become sums.** For two processes run side by side, each token is a pair
-$`(t_A, t_B)`$ of sub-tokens, so distributions and logits are functions on the 9 pairs. The optimal
-distribution is the product $`p(t_A, t_B) = p_A(t_A)\, p_B(t_B)`$, so its logits are a sum,
-
-```math
-\log p(t_A, t_B) = \log p_A(t_A) + \log p_B(t_B).
-```
-
-Conversely, if $`\ell(t_A, t_B) = \ell_A(t_A) + \ell_B(t_B)`$, then
-$`\mathrm{softmax}(\ell)(t_A, t_B) = \mathrm{softmax}(\ell_A)(t_A)\,\mathrm{softmax}(\ell_B)(t_B)`$.
-
-Centred functions of $`t_A`$ alone and of $`t_B`$ alone span two 2-dimensional subspaces of the 8-dimensional
-centred logit space, and these subspaces are orthogonal. So the optimal logit vector is *exactly* a sum of
-an A-part and a B-part in the orthogonal direct sum $`L_A \oplus L_B`$ of those two subspaces. The softmax
-turns the multiplicative structure of independent processes into additive, linear structure, which a
-linear readout produces most simply from two independent planes in the residual stream: the setting of
-the packing problem.
-
-**Sparse: the nonlinearity does the separating.** With one process active, the optimal distribution puts
-probability zero on the other process's tokens, which needs their logits to be very negative. A large
-offset along a direction that separates the two token blocks achieves this, and the softmax saturates on
-the far side. This is the offset separation measured above, and it is why sparse planes can coincide at no
-cost.
-
-**Check.** `capacity.py` refits every plane using the centred optimal logits $`\log(\eta N)`$ as coordinates
-instead of $`\eta`$. If the belief-dependent part of the activations is a curved patch in a fixed plane, both
-fits find that plane. They do: the overlap between the two fits of the same process (`plane_agreement`) is
-at least 0.999 for every represented process. This shows the belief-dependent part lies in a plane; it
-cannot say whether the model "uses" beliefs or logits as coordinates on it.
-
-### Predictions and what was observed
+- **Belief planes.** Following Shai et al., activations embed each process's belief affinely,
+  $`a \approx m_k + M_k(\eta - c)`$. The directions a belief moves the activation along form a plane,
+  a point of a Grassmannian; the belief itself fills a patch of that plane.
+- **The model reads a sphere.** Every read of the residual stream goes through a LayerNorm, which discards
+  the all-ones direction and normalises. The usable space has dimension $`d - 1`$, and the output head sees
+  a sphere of dimension $`d - 2`$.
+- **Readout bound.** The output head is smooth, so the predictions a model of width $`d`$ can make have
+  (Hausdorff) dimension at most $`d - 2`$. Exact prediction needs $`d - 2`$ to be at least the dimension of
+  the set of optimal predictions: 2 for one process or for a sparse pair, 4 for a dense pair. This is a
+  theorem for long contexts and a heuristic at context 10, where there are finitely many beliefs.
+- **Overlap.** For two planes, the mean $`\cos^2`$ of their principal angles: 0 if orthogonal, 1 if equal.
+  Measured in the usable space, in two metrics (Euclidean, and the one the output head's LayerNorm scale
+  imposes), and again with planes fitted on optimal logits.
+- **Packing.** Two planes can be orthogonal once the usable space has dimension 4, i.e. $`d \ge 5`$. Packing
+  matters when both beliefs are read at once (dense): overlapping planes amplify noise in the decode. It
+  does not when one process is active at a time (sparse): there the patches only need to be apart.
+- **Softmax.** For independent processes the optimal logits are a sum of an A-part and a B-part in
+  orthogonal subspaces, so the softmax turns independence into linear structure; with shared tokens both
+  processes' predictions live in one 2-dimensional family, which one plane can carry.
 
 | Setting | Readout bound | Packing threshold | Prediction | Observed |
 | --- | --- | --- | --- | --- |
@@ -599,7 +427,7 @@ cannot say whether the model "uses" beliefs or logits as coordinates on it.
   the large spread between seeds at width 3 suggests optimisation plays a part. The readout argument
   explains the threshold but does not exclude the others.
 - **The readout bound is a heuristic at finite context.** See
-  [Which space: LayerNorm](#which-space-layernorm): it is a theorem only for the long-context limit, and
+  [THEORY.md](THEORY.md#which-space-layernorm): it is a theorem only for the long-context limit, and
   depends on the fractal's Hausdorff dimension, which is not computed here.
 - **Linear probes only.** Every image and $`R^2`$ is a linear decode. At small widths a belief may still be
   present but encoded nonlinearly, and a linear probe would miss it. This matters for the link to
@@ -650,6 +478,7 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
 
 | File | Purpose |
 | --- | --- |
+| `THEORY.md` | The mathematics: belief planes, LayerNorm, the readout bound, packing, the softmax |
 | `run_simplex.py` | Trains every model and makes every figure and table |
 | `processes.py` | Mess3: sampling, exact beliefs, optimal predictions |
 | `composite.py` | Two processes, sparse (mixture) or dense (parallel) |
@@ -684,7 +513,15 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
   [Loss Landscape Degeneracy and Stagewise Development in Transformers](https://arxiv.org/abs/2402.02364)
   (first version titled *The Developmental Landscape of In-Context Learning*). arXiv:2402.02364, 2024.
 
+## How this was made
+
+I set the questions and the direction, ran every experiment on my laptop, checked the mathematics and the
+numbers, and decided what to keep, cut and follow up. The code and first drafts of the text and derivations
+were written with Claude (Anthropic). Several turns in the project came from that checking and questioning:
+asking whether the softmax distorts the linear picture, which space the angles should be measured in,
+whether separate tokens were giving the process away, and whether a model of two processes starts as one
+and later splits in two.
+
 ## Acknowledgements
 
-This project grew out of the Iliad Intensive. The code was written with the assistance of Claude
-(Anthropic).
+This project grew out of the Iliad Intensive.
