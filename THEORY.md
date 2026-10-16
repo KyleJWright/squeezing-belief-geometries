@@ -1,10 +1,18 @@
 # Theory: belief planes, LayerNorm and Grassmannian packing
 
-The mathematics behind [the README](README.md): what a belief plane is, which space the model can read,
-why a model of width $`d`$ can only produce a $`(d-2)`$-parameter family of predictions, how overlaps between
-planes are measured, how curvature is measured with a Gauss map, the Grassmannian packing problem, and why
-the softmax favours linear structure. The
-README's [theory in brief](README.md#theory-in-brief) summarises it and compares its predictions with what
+This document covers the mathematical background behind [the README](README.md). In particular it covers:
+
+1. [Belief planes](#belief-planes): what a belief plane is.
+2. [LayerNorm](#which-space-layernorm): which space the model can read, and why a model of width $`d`$ can
+   only produce a $`(d-2)`$-parameter family of predictions (the readout limit).
+3. [Overlap](#overlap-principal-angles-and-chordal-distance): how overlaps between planes are measured, and
+   [what is measured](#what-is-measured) in practice.
+4. [Curvature](#curvature-the-gauss-map): how curvature is measured with a Gauss map.
+5. [Packing](#the-packing-problem-and-its-bounds): the Grassmannian packing problem and its bounds, and
+   [why it matters only when both processes run simultaneously](#why-packing-matters-when-both-run-simultaneously-and-not-one-at-a-time).
+6. [The softmax](#the-softmax-and-why-it-favours-linear-structure): why the softmax favours linear structure.
+
+The README's [theory in brief](README.md#theory-in-brief) summarises it and compares its predictions with what
 was observed.
 
 
@@ -74,15 +82,15 @@ smooth. Three caveats decide how much this says.
 - **Fractal dimension.** The attractor's Hausdorff dimension lies between 0 and 2. The threshold $`d \ge 4`$
   assumes it exceeds 1, which the images suggest but which is not computed here.
 - **Two processes.** The table treats each belief set as 2-dimensional, as a filled region would be. For the
-  fractals themselves the sparse bound is $`d - 2 \ge \max(\dim_H B_A, \dim_H B_B)`$ and the dense one is
+  fractals themselves the one-at-a-time bound is $`d - 2 \ge \max(\dim_H B_A, \dim_H B_B)`$ and the simultaneous one is
   $`d - 2 \ge \dim_H (B_A \times B_B) \ge \dim_H B_A + \dim_H B_B`$, which gives $`d \ge 6`$ only if the two
   dimensions sum to more than 3.
 
-| Setting | Optimal predictions | Dimension (filled regions) | Readout bound |
+| Setting | Optimal predictions | Dimension (filled regions) | Readout limit |
 | --- | --- | --- | --- |
 | One process | $`\{\eta N\}`$ | 2 | $`d \ge 4`$ |
-| Two processes, sparse | union of two 2-dimensional families | 2 | $`d \ge 4`$ |
-| Two processes, dense | products $`p_A(t_A)\,p_B(t_B)`$ over token pairs $`(t_A, t_B)`$ | 4 | $`d \ge 6`$ |
+| Two processes, one at a time | union of two 2-dimensional families | 2 | $`d \ge 4`$ |
+| Two processes, simultaneous | products $`p_A(t_A)\,p_B(t_B)`$ over token pairs $`(t_A, t_B)`$ | 4 | $`d \ge 6`$ |
 
 This is a necessary condition for *exact* prediction only: below it the model must approximate, and
 the measured loss shows the cost.
@@ -182,9 +190,9 @@ the largest pairwise overlap, equivalently to maximise the smallest chordal dist
 
 `packing.py` computes the optimum numerically and reproduces both cases.
 
-## Why packing matters in the dense regime, and not in the sparse one
+## Why packing matters when both run simultaneously, and not one at a time
 
-**Dense: simultaneous decoding.** Both beliefs are active at once, $`a = m + M_A u_A + M_B u_B`$. Decoding
+**Simultaneous: decoding both at once.** Both beliefs are active at once, $`a = m + M_A u_A + M_B u_B`$. Decoding
 both linearly needs $`[M_A\; M_B]`$ to be injective, i.e. $`V_A \cap V_B = 0`$: linear independence, not
 orthogonality. Orthogonality matters for noise. The Gram matrix of $`[Q_A\; Q_B]`$ is
 $`\begin{pmatrix} I & C \\ C^\top & I \end{pmatrix}`$ with $`C = Q_A^\top Q_B`$, whose eigenvalues are
@@ -197,13 +205,13 @@ $`1 \pm \cos\theta_i`$. Least-squares decoding therefore amplifies noise in the 
 which is smallest when the planes are as far apart as possible. A model that must read both beliefs
 through noise is pushed towards the optimal packing.
 
-**Sparse: one patch at a time.** Only one process is active, so the model must (i) tell which patch the
+**One at a time: one patch at a time.** Only one process is active, so the model must (i) tell which patch the
 activation is in, and (ii) decode the belief within it. Two compact convex patches are disjoint exactly
 when a hyperplane separates them, and nothing in this constrains the directions $`V_A, V_B`$. Two
 triangles can share a plane and sit side by side. The relevant object is an arrangement of *affine*
 patches, not a packing of linear subspaces, and the Grassmannian overlap can be large at no cost.
 
-**Sparse with shared tokens: a common quotient.** With one set of tokens, the optimal prediction for either
+**One at a time with shared tokens: a common quotient.** With one set of tokens, the optimal prediction for either
 process is a distribution over the same 3 tokens: $`p = \eta_A N_A`$ or $`p = \eta_B N_B`$, both in the same
 2-dimensional family. If the final layer carries $`p`$ (or any affine image of it), both beliefs map into a
 single plane and the patches overlap, with no need to tell the processes apart there. Separate planes would
@@ -221,7 +229,7 @@ probabilities. Logits are defined up to an additive constant, so take them centr
 $`\eta \mapsto \log(\eta N)`$ (centred). This is a smooth, injective map of the triangle onto a region of that
 plane. So the softmax curves coordinates *within* a plane; it does not take the patch out of it.
 
-**Dense: products become sums.** For two processes run side by side, each token is a pair
+**Simultaneous: products become sums.** For two processes run side by side, each token is a pair
 $`(t_A, t_B)`$ of sub-tokens, so distributions and logits are functions on the 9 pairs. The optimal
 distribution is the product $`p(t_A, t_B) = p_A(t_A)\, p_B(t_B)`$, so its logits are a sum,
 
@@ -239,11 +247,11 @@ turns the multiplicative structure of independent processes into additive, linea
 linear readout produces most simply from two independent planes in the residual stream: the setting of
 the packing problem.
 
-**Sparse: the nonlinearity does the separating.** With one process active, the optimal distribution puts
+**One at a time: the nonlinearity does the separating.** With one process active, the optimal distribution puts
 probability zero on the other process's tokens, which needs their logits to be very negative. A large
 offset along a direction that separates the two token blocks achieves this, and the softmax saturates on
 the far side. This is the offset separation measured in [README section 4](README.md#4-geometry-of-the-belief-patches),
-and it is why sparse planes can coincide at no cost.
+and it is why one-at-a-time planes can coincide at no cost.
 
 **Check.** `capacity.py` refits every plane using the centred optimal logits $`\log(\eta N)`$ as coordinates
 instead of $`\eta`$. If the belief-dependent part of the activations is a curved patch in a fixed plane, both

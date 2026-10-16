@@ -69,8 +69,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "results", "gauss")
 INK, MUTED, RULE = "#1f1f1e", "#5f5e5a", "#c3c2b7"
 REGIME_COLOURS = {"single": INK, "mixture": "#2a78d6", "mixture-shared": "#1baf7a", "parallel": "#eb6834"}
-REGIME_NAMES = {"single": "one process", "mixture": "sparse, separate tokens", "mixture-shared": "sparse, shared tokens",
-                "parallel": "dense"}
+REGIME_NAMES = {"single": "one process", "mixture": "one at a time, separate tokens", "mixture-shared": "one at a time, shared tokens",
+                "parallel": "simultaneous"}
 
 
 def orth(M):
@@ -303,7 +303,7 @@ def main():
     fig = plt.figure(figsize=(max(2.2 * ncol, 12), 7.6))
     gs = fig.add_gridspec(2, ncol, height_ratios=[1, 1.5], hspace=0.35)
     vmax = np.nanpercentile([t for r in rows for t in r["tilt_per_anchor"]], 95)
-    short = {"single": "one process", "mixture": "sparse, separate", "mixture-shared": "sparse, shared", "parallel": "dense"}
+    short = {"single": "one process", "mixture": "one at a time, separate", "mixture-shared": "one at a time, shared", "parallel": "simultaneous"}
     sc = None
     for i, (regime, d) in enumerate(maps):
         ax = fig.add_subplot(gs[0, i])

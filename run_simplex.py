@@ -103,7 +103,7 @@ def figures(seed):
         (["simplex_figures.py", "pair", "--seed", str(seed),
           "--left", *[os.path.join(runs, f"mixture_K2_d{d}.pt") for d in PAIR_WIDTHS],
           "--right", *[os.path.join(runs, f"shared_K2_d{d}.pt") for d in PAIR_WIDTHS],
-          "--left_title", "Sparse, separate tokens per process", "--right_title", "Sparse, one shared set of tokens",
+          "--left_title", "One at a time, separate tokens per process", "--right_title", "One at a time, one shared set of tokens",
           "--out", os.path.join(res, "simplex_shared")], "shared"),
     ]
     out = []

@@ -10,7 +10,7 @@
 
     # Sparse with separate tokens per process against sparse with one shared set of tokens
     python simplex_figures.py pair --left runs/seed0/mixture_K2_d*.pt --right runs/seed0/shared_K2_d*.pt \
-        --left_title "Sparse, separate tokens" --right_title "Sparse, shared tokens" --out results/seed0/simplex_shared
+        --left_title "One at a time, separate tokens" --right_title "One at a time, shared tokens" --out results/seed0/simplex_shared
 
 How each panel is made (the procedure of Shai et al., Fig. 5):
   1. Compute the exact belief over the 3 hidden states after every prefix (single mode: every
@@ -272,8 +272,8 @@ def main():
     p = sub.add_parser("pair")
     p.add_argument("--left", "--mixture", dest="left", nargs="+", required=True, help="models for the left pair of columns")
     p.add_argument("--right", "--parallel", dest="right", nargs="+", required=True, help="models for the right pair")
-    p.add_argument("--left_title", default="Sparse: one process per sequence")
-    p.add_argument("--right_title", default="Dense: both processes every token")
+    p.add_argument("--left_title", default="One at a time: one process per sequence")
+    p.add_argument("--right_title", default="Simultaneous: both processes every token")
     for q in (s, p):
         q.add_argument("--out", required=True)
         q.add_argument("--n_seq", type=int, default=4000, help="pair mode: sampled sequences per model")

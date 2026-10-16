@@ -47,7 +47,7 @@ import numpy as np
 import torch
 
 COLOURS = {"mixture": "#2a78d6", "mixture-shared": "#1baf7a", "parallel": "#eb6834"}
-NAMES = {"mixture": "sparse, separate tokens", "mixture-shared": "sparse, shared tokens", "parallel": "dense"}
+NAMES = {"mixture": "one at a time, separate tokens", "mixture-shared": "one at a time, shared tokens", "parallel": "simultaneous"}
 INK, MUTED, RULE = "#1f1f1e", "#5f5e5a", "#c3c2b7"
 
 
@@ -201,7 +201,7 @@ def main():
         ax.axhline(1, color=MUTED, linewidth=1, linestyle="--")
         ax.text(max(widths), 1.05, "centres one spread apart", ha="right", va="bottom", fontsize=8.5, color=MUTED)
         ax.set_ylim(bottom=0)
-        ax.set_title("Sparse regime: how far apart the two patches sit", loc="left", fontsize=11, color=INK)
+        ax.set_title("One at a time: how far apart the two patches sit", loc="left", fontsize=11, color=INK)
         ax.set_ylabel("distance between process centres ÷ within-process spread")
         ax.set_xlabel("residual width d")
     for ax in axes[0]:
