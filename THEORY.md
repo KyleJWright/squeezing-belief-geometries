@@ -2,7 +2,8 @@
 
 The mathematics behind [the README](README.md): what a belief plane is, which space the model can read,
 why a model of width $`d`$ can only produce a $`(d-2)`$-parameter family of predictions, how overlaps between
-planes are measured, the Grassmannian packing problem, and why the softmax favours linear structure. The
+planes are measured, how curvature is measured with a Gauss map, the Grassmannian packing problem, and why
+the softmax favours linear structure. The
 README's [theory in brief](README.md#theory-in-brief) summarises it and compares its predictions with what
 was observed.
 
@@ -130,6 +131,34 @@ canonical:
 The readout referred to throughout is the output head,
 $`\text{logits} = W_U\,\mathrm{LN}(a) + b_U`$, followed by a softmax.
 
+## Curvature: the Gauss map
+
+The belief-plane picture is an affine approximation. Write the embedding of beliefs as a map
+$`f : \Delta^2 \to \mathbf{1}^\perp`$, $`u \mapsto \mathbb{E}[a \mid u]`$ (in tangent coordinates $`u`$), and
+suppose it is smooth. Its **Gauss map** sends each point to its tangent plane,
+
+```math
+\mathcal{G} : \Delta^2 \to \mathrm{Gr}(2, d-1), \qquad u \mapsto \mathrm{im}\, Df(u).
+```
+
+The patch is (an open piece of) a plane exactly when $`\mathcal{G}`$ is constant, and the variation of
+$`\mathcal{G}`$ measures curvature. Two features make it a good measure here:
+
+- **It ignores parametrisation.** Composing $`f`$ with a diffeomorphism of the triangle, for instance using
+  optimal logits $`\log(\eta N)`$ instead of beliefs as coordinates, leaves the image of $`Df`$ unchanged.
+  Bending *within* the plane is invisible to it; only bending *out of* the plane counts.
+- **It lives where everything else does.** The overlap between local and global planes uses the same
+  principal angles as the overlap between two processes' planes.
+
+A linear decoder is blind to this. If $`f(u) = m + Mu + h(u)\,n`$ with $`n \perp \mathrm{im}\, M`$, the
+decoder $`M^{+}`$ recovers $`u`$ exactly for any $`h`$, while $`Df(u) = M + n\, \nabla h(u)^\top`$ tilts
+out of $`\mathrm{im}\, M`$ wherever $`\nabla h \ne 0`$.
+
+`gauss_map.py` estimates $`Df`$ at anchor beliefs by local least squares over nearby beliefs, so it sees
+curvature on the scale of the neighbourhood. With finitely many beliefs at context 10, $`f`$ is only defined on
+a finite set, and $`\mathbb{E}[a \mid u]`$ is estimated by averaging over nearby beliefs. Wrinkles finer than
+the neighbourhood are therefore not resolved, and noise sets a floor, estimated from a synthetic flat patch.
+
 ## The packing problem and its bounds
 
 **Grassmannian packing** (Conway, Hardin & Sloane 1996): place $`K`$ planes in $`\mathbb{R}^n`$ to minimise
@@ -213,7 +242,7 @@ the packing problem.
 **Sparse: the nonlinearity does the separating.** With one process active, the optimal distribution puts
 probability zero on the other process's tokens, which needs their logits to be very negative. A large
 offset along a direction that separates the two token blocks achieves this, and the softmax saturates on
-the far side. This is the offset separation measured in [README section 4](README.md#4-geometry-is-it-a-packing-problem),
+the far side. This is the offset separation measured in [README section 4](README.md#4-geometry-of-the-belief-patches),
 and it is why sparse planes can coincide at no cost.
 
 **Check.** `capacity.py` refits every plane using the centred optimal logits $`\log(\eta N)`$ as coordinates

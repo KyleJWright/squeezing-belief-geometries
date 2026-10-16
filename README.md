@@ -51,6 +51,9 @@ up everything else, cheapest first. Each experiment shows a different piece of t
 - **Packing was the wrong lens.** I expected the Grassmannian packing problem to describe how the beliefs
   share the space. It mostly does not: when both beliefs are kept their planes are near-orthogonal, but
   the readout limit always binds first, and in the sparse case the problem is not a packing problem at all.
+- **The planes are not flat.** Measured with a Gauss map, every belief patch is a wrinkled sheet whose local
+  tangent planes tilt 12–50° from its best-fit plane. Linear decoders never notice, because the wrinkles lie
+  outside the plane. The planes are the linearly readable summary of curved patches.
 
 ## Why this matters
 
@@ -211,20 +214,24 @@ is computed as if the process were known. With shared tokens the model cannot kn
 a sequence, so even the Bayes-optimal predictor would not carry these beliefs exactly, and the ceiling is
 below 1.
 
-The geometry is the striking part: see [section 4](#4-geometry-is-it-a-packing-problem).
+The geometry is the striking part: see [section 4](#4-geometry-of-the-belief-patches).
 
-## 4. Geometry: is it a packing problem?
+## 4. Geometry of the belief patches
 
-Each belief occupies a 2-dimensional plane in the residual stream: the directions the activation moves as
-that belief moves. The *overlap* of two planes is the mean $`\cos^2`$ of their two principal angles (0 for
-orthogonal planes, 1 for identical ones). Planes are measured in the part of the stream that LayerNorm can
-see, which has dimension $`d - 1`$.
+Each belief occupies a patch of the residual stream. Two questions about its shape: how do two processes'
+patches sit relative to each other, and is each patch flat? Everything here is measured in the part of the
+stream LayerNorm can see, of dimension $`d - 1`$.
 
 The starting hypothesis was the cartoon of superposition: two beliefs squeezed into too little room should
-arrange their planes as an optimal Grassmannian packing, as far apart as the space allows. **This turned
-out to be mostly the wrong lens.** When both beliefs are kept, their planes are indeed near-orthogonal,
-but that happens only at widths where orthogonality is easy, and the readout limit binds before packing
-ever does. In the sparse case the problem is not a packing problem at all.
+arrange their planes as an optimal Grassmannian packing, as far apart as the space allows. **This turned out
+to be mostly the wrong lens**, for two reasons: the readout limit binds before packing ever does, and the
+patches are not flat planes but wrinkled sheets.
+
+### Overlap between processes
+
+The *overlap* of two belief planes is the mean $`\cos^2`$ of their principal angles: 0 for orthogonal planes,
+1 for identical ones. Each plane is the best linear fit to its patch, so overlap measures how much two
+beliefs interfere for a linear reader, which is how every later layer first reads the stream.
 
 ![Learned belief planes against the optimal Grassmannian packing (left) and how far apart the sparse patches sit (right)](results/packing.png)
 
@@ -242,49 +249,77 @@ Largest overlap between the two belief planes, final layer, among models that re
 In the γ-metric the same entries are, by width 4, 5, 6, 8: separate tokens 0.72, 0.28, 0.15, 0.08; shared
 tokens 0.93, 0.905, 0.94, 0.97; dense –, 0.36, 0.021, 0.015.
 
-*Offset separation* is the distance between the centres of the two processes' activation patches, divided
-by their typical spread. *Two random planes* is the expected overlap of independent random planes,
-$`2/(d-1)`$.
+*Offset separation* is the distance between the centres of the two processes' patches, divided by their
+typical spread; *two random planes* is the expected overlap of independent random planes, $`2/(d-1)`$.
 
-**Dense: near the optimal packing.** Whenever both beliefs are kept (all seeds at widths 6 and 8), their
-planes are nearly orthogonal: overlap about 0.01–0.02, against 0.3–0.4 for random planes. Two planes fit
-orthogonally once $`d - 1 \ge 4`$, i.e. $`d \ge 5`$, so packing is not what limits the dense models: the readout
-bound $`d \ge 6`$ is reached first. At width 5 only one seed keeps B at all, and that model's planes overlap
-noticeably (0.26).
+- **Dense: near-orthogonal, but never constrained.** Whenever both beliefs are kept (all seeds at widths 6
+  and 8) the planes are nearly orthogonal, overlap 0.01–0.02 against 0.3–0.4 for random planes. But
+  orthogonality is easy there: it is possible from $`d \ge 5`$, and the readout bound $`d \ge 6`$ is reached
+  first. At width 5 only one seed keeps B at all (overlap 0.26). Near-orthogonality may also simply be
+  inherited from the optimal logits, whose A and B parts lie in orthogonal subspaces
+  ([theory](THEORY.md#the-softmax-and-why-it-favours-linear-structure)); the data cannot tell these apart.
+- **Sparse, separate tokens: an arrangement, not a packing.** Overlaps are far above the optimum, yet both
+  processes decode well and loss is within 0.14% of optimal: the patches share directions but sit about 6
+  spreads apart. That separation comes from the token embeddings, not from anything the model had to learn,
+  as the shared-token models show.
+- **Sparse, shared tokens: one plane for two beliefs.** Without separate tokens the offset drops to
+  0.05–0.4 spreads, and the planes coincide (overlap 0.9–0.97) at every width, including width 8, where there
+  is room for two. Whichever process is running, the prediction is a distribution over the same 3 tokens,
+  and one plane carries it for both, at no measurable cost in loss.
+  [Section 5](#5-disentangling-does-the-model-know-which-process-it-is-in) asks whether the model also
+  tracks which process is running.
 
-Two cautions. First, the comparison never reaches the regime where packing is constrained: no dense model
-keeps both beliefs at a width where orthogonal planes are impossible. Second, near-orthogonality has a
-simpler possible cause than packing pressure. The optimal logits for A and B lie in orthogonal subspaces of
-logit space ([theory](THEORY.md#the-softmax-and-why-it-favours-linear-structure)), so planes that the output
-head maps onto them through a reasonably well-conditioned map come out nearly orthogonal anyway. The data
-cannot tell these apart.
+These conclusions hold in the metric the output head's LayerNorm imposes and with planes fitted on optimal
+logits instead of beliefs (see [What is measured](THEORY.md#what-is-measured)).
 
-**Sparse, separate tokens: not a packing problem.** Overlaps are far above the optimum, and at width 4
-above even the random baseline, yet both processes are decoded well and loss is within 0.14% of optimal.
-The two belief patches share directions but sit about 6 spreads apart, so position, not direction, tells
-them apart. Only one patch is active at a time, so nothing forces their directions apart. Even at width 3,
-where the two planes must coincide, the patches are still separated (2.4 spreads); the failure there is the
-readout bound, not a collision.
+### Curvature within a process: the Gauss map
 
-**Sparse, shared tokens: one plane for two beliefs.** Remove the separate tokens and the separation goes
-with it: the offset drops from about 6 spreads to 0.05–0.4, so the 6 spreads came from the token
-embeddings, not from anything the model had to learn. The planes coincide too, with overlap 0.9–0.97 at
-every width, including width 8, where there is room for orthogonal planes and for a separate offset. The
-model is not squeezed into sharing; it chooses one plane for both beliefs, and loses nothing measurable by
-doing so (loss within 0.15% of optimal down to width 4).
+A linear decoder cannot tell whether a patch is flat. A surface that bends into an extra direction decodes
+perfectly once that direction is projected away. `gauss_map.py` measures the bending directly.
 
-A natural reading: whichever process is running, the next-token prediction is a distribution over the same
-3 tokens, and one plane can carry it for both. Each process's belief maps to that prediction by an
-invertible affine map, so each belief is linearly decodable from the shared plane once the process is
-known, and the two decoders find the same plane. This is consistent with the final layer holding mainly the
-next-token prediction, not two separate beliefs. The decoders here are told which process produced each
-sequence; [section 5](#5-disentangling-does-the-model-know-which-process-it-is-in) asks whether the model
-itself tracks the process.
+- **Gauss map.** At 64 anchor beliefs spread over the triangle, a local affine fit of activation on belief
+  over the nearby beliefs (10% of the points) gives the local tangent plane, a point of the same
+  Grassmannian. The *tilt* is its angle from the global plane. A synthetic flat patch, the global fit plus
+  the model's own leftover variation shuffled between points, gives the tilt that finite neighbourhoods
+  produce on their own: the *flat floor*.
+- **Bending.** The average activation at each belief, estimated by averaging over nearby beliefs, minus
+  the global fit, split into the part outside the plane (bending) and inside it (a reparametrisation of the
+  plane, which is not curvature), as a fraction of the variance the global fit explains.
 
-**Robustness.** Angles depend on the choice of inner product. Recomputed in the metric the output head's
-LayerNorm imposes (the γ-metric), and with planes fitted on optimal logits instead of beliefs, the
-conclusions are unchanged. The two fits find the same plane for every represented process (agreement
-≥ 0.999). See [What is measured](THEORY.md#what-is-measured).
+![Gauss map: local tilt across the triangle for selected models (top), and the excess tilt and out-of-plane bending by width (bottom)](results/gauss/gauss.png)
+
+| Model | Excess tilt, width 8 | width 4 | Bending, width 8 | width 4 |
+| --- | --- | --- | --- | --- |
+| One process | 34.8° | 27.5° | 17.5% | 20.1% |
+| Sparse, separate tokens, A | 19.1° | 12.0° | 4.2% | 1.7% |
+| Sparse, separate tokens, B | 35.7° | 24.7° | 22.5% | 9.3% |
+| Sparse, shared tokens, A | 34.5° | 27.4° | 26.1% | 29.5% |
+| Sparse, shared tokens, B | 50.1° | 29.1° | 33.6% | 47.6% |
+| Dense, A | 21.6° | 17.2° | 5.4% (both beliefs) | – |
+
+(Excess tilt is the mean tilt above the flat floor, which is about 2–7°. One process at width 64: 28.4°,
+8.4%.
+Bending is undefined for dense models of width 5 or less, where the two planes fill the readable space, and
+the dense B belief is dropped there. Means over 3 seeds; all numbers in `results/gauss/gauss.csv`.)
+
+- **No patch is flat.** Local tangent planes tilt 12–50° beyond the flat floor of about 2–7°, in every
+  model.
+- **Wrinkled, not bowed.** Quadratic terms in the belief capture only 0.3–4% of the activation variance, far
+  less than the total bending: the patches are corrugated at fine scales rather than curved like a bowl.
+- **Most bent at the corners.** In most maps, tilt is largest near the vertices and edges, where beliefs are
+  most confident, and smallest in the middle.
+- **Shared tokens bend most.** One possible reason, not tested: with shared tokens the model also tracks
+  which process is running (section 5), and that coordinate varies with the belief, so it may appear here as
+  bending out of the shared plane.
+- **This is much of the variance the linear fits miss.** The global affine fit explains between about 40%
+  and 97% of the activation variance, depending on the model, and this bending accounts for roughly a
+  quarter to four-fifths of what it misses (more than half in 13 of the 23 cases).
+
+So the planes of the rest of this README are the linearly readable summary of curved patches: each belief
+uses more than two dimensions, and the extra ones carry wrinkles that a linear reader never sees. The
+packing of planes describes linear interference between beliefs, not their full geometry. A caveat: with a
+context of 10 there are finitely many beliefs, so the "surface" is an average over nearby beliefs, and the
+finest wrinkles cannot be told apart from scatter.
 
 ## 5. Disentangling: does the model know which process it is in?
 
@@ -405,9 +440,10 @@ The full derivations are in [THEORY.md](THEORY.md). The essentials:
 - **Overlap.** For two planes, the mean $`\cos^2`$ of their principal angles: 0 if orthogonal, 1 if equal.
   Measured in the usable space, in two metrics (Euclidean, and the one the output head's LayerNorm scale
   imposes), and again with planes fitted on optimal logits.
-- **Packing.** Two planes can be orthogonal once the usable space has dimension 4, i.e. $`d \ge 5`$. Packing
-  matters when both beliefs are read at once (dense): overlapping planes amplify noise in the decode. It
-  does not when one process is active at a time (sparse): there the patches only need to be apart.
+- **Packing.** Two planes can be orthogonal once $`d \ge 5`$. It matters only when both beliefs are read at
+  once (dense), where overlapping planes amplify noise in a linear decode.
+- **Curvature.** The local tangent plane of a patch is a point of the same Grassmannian; the patch is flat
+  exactly when this Gauss map is constant.
 - **Softmax.** For independent processes the optimal logits are a sum of an A-part and a B-part in
   orthogonal subspaces, so the softmax turns independence into linear structure; with shared tokens both
   processes' predictions live in one 2-dimensional family, which one plane can carry.
@@ -440,6 +476,10 @@ The full derivations are in [THEORY.md](THEORY.md). The essentials:
   Section 5 probes for the process posterior directly, with linear probes only.
 - **Training dynamics are sampled coarsely.** Section 5's development run has 19 snapshots, 3 seeds and two
   widths; a brief transition between snapshots would be missed.
+- **Curvature is measured on averages.** The Gauss map and bending use averages over nearby beliefs, a
+  finite neighbourhood (10% of the points) and a flat floor from shuffled residuals. Finer wrinkles than
+  the neighbourhood are not resolved, and the bending of a belief whose patch is small (B) is large relative
+  to that patch.
 - **The packing comparison is never constrained.** Dense models keep both beliefs only where orthogonal
   planes are possible, and their near-orthogonality may be inherited from the orthogonal structure of the
   optimal logits rather than from pressure to pack.
@@ -469,6 +509,7 @@ python memory_value.py                         # value of each process's memory 
 python disentangle.py probe                    # which-process probe on the trained models (minutes)
 python disentangle.py train                    # 6 shared-token models with training snapshots
 python disentangle.py develop                  # analyse the snapshots (minutes)
+python gauss_map.py                            # curvature of the belief patches (minutes)
 ```
 
 `run_simplex.py` trains in parallel, one model per CPU core, skips models already trained, and writes
@@ -488,6 +529,7 @@ everything in `results/`. It runs on a CPU; no GPU is needed.
 | `capacity.py` | Belief planes, overlaps (Euclidean, γ-metric, logit coordinates), offset separation |
 | `packing.py` | Optimal Grassmannian packings and the comparison figure |
 | `memory_value.py` | Value of each process's memory in nats |
+| `gauss_map.py` | Gauss map and bending of each belief patch |
 | `disentangle.py` | Probe for which process is running; training-dynamics analysis from snapshots |
 | `results/` | Figures, `metrics.csv` (every number above, mean/min/max over seeds), per-seed analysis files |
 
