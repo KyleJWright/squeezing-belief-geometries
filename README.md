@@ -51,7 +51,7 @@ Each experiment shows a different piece of this:
   use separate tokens, their belief patches point in similar directions but sit apart. When they share the same three tokens, the patches lie on top of each other, with the same directions and the same centre, at every width. This holds even at width 8, where there is room to keep them apart. A likely reason is that either way the model must predict a distribution over the same three tokens, so one patch can serve both. Sharing costs nothing measurable: loss stays within 0.15% of optimal down to width 4, the same as with separate tokens.
 - **Which process is running?** With room to spare (width 8) the model also tracks which process is
   running, as well as an optimal observer can, in one extra direction: measured against the exact 6-state
-  belief, it carries as much of it as the prediction plus the process posterior would ($`R^2`$ 0.913 for
+  belief, it carries as much of it as the prediction plus the process posterior would ($`R^2 \approx 0.91`$ for
   both), never the full belief. Squeezed, that
   extra direction is the first thing to go: at width 4 the model learns it early in training and then gives
   it up.
@@ -455,7 +455,7 @@ model with 6 hidden states, (process, state).
 (Final layer, mean over 3 seeds.)
 
 - **Width decides how much of the joint belief is kept.** At width 4 the model carries about what the
-  prediction alone carries; at width 8 it matches the prediction plus $`\pi`$ to three decimals; widths 5
+  prediction alone carries; at width 8 it matches the prediction plus $`\pi`$; widths 5
   and 6 lie in between. No width carries the full joint belief, which would give $`R^2`$ near 1. This makes
   the picture above quantitative, as far as linear probes can see: the final layer holds a projection of the
   joint belief that grows from the prediction to the prediction plus $`\pi`$ as room allows.
